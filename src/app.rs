@@ -179,6 +179,23 @@ mod tests {
     }
 
     #[test]
+    fn arrows_turn_and_q_quits_while_playing() {
+        let mut a = app();
+        press(&mut a, "5");
+        a.handle_key(KeyCode::Up).unwrap();
+        assert_eq!(a.game.dir, (0, 1));
+        // Left would reverse the start direction (1, 0), so step once first.
+        a.on_tick().unwrap();
+        a.handle_key(KeyCode::Left).unwrap();
+        assert_eq!(a.game.dir, (-1, 0));
+        // The last step was (0, 1), so Down is a reversal and is ignored.
+        a.handle_key(KeyCode::Down).unwrap();
+        assert_eq!(a.game.dir, (-1, 0));
+        press(&mut a, "q");
+        assert!(a.quit);
+    }
+
+    #[test]
     fn zero_score_death_goes_to_game_over() {
         let mut a = app();
         die_with_score(&mut a, 0);

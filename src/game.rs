@@ -197,4 +197,17 @@ mod tests {
         assert_eq!(g.apples, 1);
         assert_eq!(g.score, 4);
     }
+
+    #[test]
+    fn variable_score_uses_level_before_the_apple_counts() {
+        let mut g = Game::new(Mode::Variable);
+        g.snake = VecDeque::from([(0, H / 2)]);
+        for _ in 0..3 {
+            feed(&mut g);
+        }
+        assert_eq!(g.score, 3);
+        assert_eq!(g.level(), 2);
+        feed(&mut g);
+        assert_eq!(g.score, 5);
+    }
 }

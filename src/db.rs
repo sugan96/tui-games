@@ -184,6 +184,24 @@ mod tests {
     }
 
     #[test]
+    fn qualifies_at_nine_and_eleven_named_rows() {
+        let db = Db::open_in_memory().unwrap();
+        for i in 0..TOP_N as u32 - 1 {
+            add(&db, "AAA", 10 + i);
+        }
+        assert!(db.qualifies(1).unwrap());
+
+        let db = Db::open_in_memory().unwrap();
+        for i in 0..TOP_N as u32 + 1 {
+            add(&db, "AAA", 10 + i);
+        }
+        // Scores 10 to 20. Tenth best is 11, lowest is 10.
+        assert!(!db.qualifies(11).unwrap());
+        assert!(db.qualifies(12).unwrap());
+        assert!(!db.qualifies(10).unwrap());
+    }
+
+    #[test]
     fn mode_round_trips() {
         let db = Db::open_in_memory().unwrap();
         for m in [Mode::Variable, Mode::Fixed(1), Mode::Fixed(9)] {
