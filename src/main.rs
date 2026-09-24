@@ -1,71 +1,33 @@
-#[allow(dead_code)] // wired into the main loop in a later task
 mod app;
-#[allow(dead_code)] // wired into the UI in a later task
 mod db;
 mod game;
+mod ui;
 
-use std::io;
+use app::App;
+use db::Db;
+use ratatui::crossterm::event::{self, Event, KeyEventKind};
 
-use game::{Game, Mode, H, W};
-use ratatui::{
-    crossterm::event::{self, Event, KeyCode},
-    style::Color,
-    widgets::{
-        canvas::{Canvas, Points},
-        Block,
-    },
-};
-
-fn main() -> io::Result<()> {
+fn main() -> anyhow::Result<()> {
+    let db = Db::open_default()?; // before the terminal is touched
     let mut terminal = ratatui::init();
-    let mut game = Game::new(Mode::Fixed(5));
+    let result = run(&mut terminal, db);
+    ratatui::restore();
+    result
+}
 
-    loop {
-        terminal.draw(|f| {
-            let status = format!(
-                "{}  level {}  apples {}  score {}",
-                game.mode.label(),
-                game.level(),
-                game.apples,
-                game.score
-            );
-            let title = if game.over {
-                format!(" GAME OVER  {status}  q quit ")
-            } else {
-                format!(" snake  {status}  q quit ")
-            };
-            let canvas = Canvas::default()
-                .block(Block::bordered().title(title))
-                .x_bounds([0.0, W as f64])
-                .y_bounds([0.0, H as f64])
-                .marker(ratatui::symbols::Marker::Block)
-                .paint(|ctx| {
-                    let body: Vec<(f64, f64)> =
-                        game.snake.iter().map(|&(x, y)| (x as f64, y as f64)).collect();
-                    ctx.draw(&Points { coords: &body, color: Color::Green });
-                    let food = [(game.food.0 as f64, game.food.1 as f64)];
-                    ctx.draw(&Points { coords: &food, color: Color::Red });
-                });
-            f.render_widget(canvas, f.area());
-        })?;
-
-        if event::poll(game.tick())?
-            && let Event::Key(k) = event::read()?
-        {
-            match k.code {
-                KeyCode::Char('q') | KeyCode::Esc => break,
-                KeyCode::Up => game.turn((0, 1)),
-                KeyCode::Down => game.turn((0, -1)),
-                KeyCode::Left => game.turn((-1, 0)),
-                KeyCode::Right => game.turn((1, 0)),
-                _ => {}
+fn run(terminal: &mut ratatui::DefaultTerminal, db: Db) -> anyhow::Result<()> {
+    let mut app = App::new(db)?;
+    while !app.quit {
+        terminal.draw(|f| ui::draw(f, &app))?;
+        if event::poll(app.tick_rate())? {
+            if let Event::Key(k) = event::read()?
+                && k.kind == KeyEventKind::Press
+            {
+                app.handle_key(k.code)?;
             }
-        }
-        if !game.over {
-            game.step();
+        } else {
+            app.on_tick()?;
         }
     }
-
-    ratatui::restore();
     Ok(())
 }

@@ -80,6 +80,7 @@ impl Db {
         Db::init(Connection::open(path)?)
     }
 
+    #[cfg(test)]
     pub fn open_in_memory() -> Result<Db> {
         Db::init(Connection::open_in_memory()?)
     }

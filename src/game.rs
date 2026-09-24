@@ -13,7 +13,6 @@ pub enum Mode {
 
 impl Mode {
     /// 0 for Variable, 1 to 9 for Fixed.
-    #[allow(dead_code)] // used by the database module in a later task
     pub fn as_db(self) -> i64 {
         match self {
             Mode::Variable => 0,
@@ -22,7 +21,6 @@ impl Mode {
     }
 
     /// Inverse of as_db. None for anything else.
-    #[allow(dead_code)] // used by the database module in a later task
     pub fn from_db(v: i64) -> Option<Mode> {
         match v {
             0 => Some(Mode::Variable),
