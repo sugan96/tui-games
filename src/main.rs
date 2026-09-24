@@ -1,3 +1,5 @@
+#[allow(dead_code)] // wired into the UI in a later task
+mod db;
 mod game;
 
 use std::io;
