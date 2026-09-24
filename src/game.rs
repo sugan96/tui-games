@@ -52,6 +52,8 @@ pub struct Game {
     pub mode: Mode,
     pub apples: u32,
     pub score: u32,
+    /// Direction of the last step. turn() checks reversal against this.
+    moved: (i32, i32),
 }
 
 impl Game {
@@ -64,6 +66,7 @@ impl Game {
             mode,
             apples: 0,
             score: 0,
+            moved: (1, 0),
         };
         g.spawn_food();
         g
@@ -101,6 +104,7 @@ impl Game {
             self.over = true;
             return;
         }
+        self.moved = self.dir;
         self.snake.push_front(head);
         if head == self.food {
             self.score += self.level() as u32;
@@ -111,9 +115,9 @@ impl Game {
         }
     }
 
-    /// Ignore a direct reversal.
+    /// Ignore a reversal of the last step, even across several turns in one tick.
     pub fn turn(&mut self, d: (i32, i32)) {
-        if d.0 != -self.dir.0 || d.1 != -self.dir.1 {
+        if d.0 != -self.moved.0 || d.1 != -self.moved.1 {
             self.dir = d;
         }
     }
@@ -141,6 +145,16 @@ mod tests {
             g.step();
         }
         assert!(g.over);
+    }
+
+    #[test]
+    fn two_turns_in_one_tick_cannot_reverse() {
+        let mut g = Game::new(Mode::Fixed(1));
+        g.snake = VecDeque::from([(W / 2, H / 2), (W / 2 - 1, H / 2)]);
+        g.turn((0, -1));
+        g.turn((-1, 0));
+        g.step();
+        assert!(!g.over);
     }
 
     #[test]
