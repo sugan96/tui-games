@@ -41,7 +41,14 @@ pub struct GameRecord {
 fn is_valid(conn: &Connection) -> rusqlite::Result<bool> {
     match conn.query_row("PRAGMA integrity_check", [], |r| r.get::<_, String>(0)) {
         Ok(s) => Ok(s == "ok"),
-        Err(e) if e.sqlite_error_code() == Some(ErrorCode::NotADatabase) => Ok(false),
+        Err(e)
+            if matches!(
+                e.sqlite_error_code(),
+                Some(ErrorCode::NotADatabase | ErrorCode::DatabaseCorrupt)
+            ) =>
+        {
+            Ok(false)
+        }
         Err(e) => Err(e),
     }
 }
