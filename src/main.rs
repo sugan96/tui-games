@@ -1,3 +1,5 @@
+#[allow(dead_code)] // wired into the main loop in a later task
+mod app;
 #[allow(dead_code)] // wired into the UI in a later task
 mod db;
 mod game;
