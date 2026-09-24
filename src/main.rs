@@ -1,5 +1,8 @@
-use std::{collections::VecDeque, io, time::Duration};
+mod game;
 
+use std::io;
+
+use game::{Game, Mode, H, W};
 use ratatui::{
     crossterm::event::{self, Event, KeyCode},
     style::Color,
@@ -9,71 +12,23 @@ use ratatui::{
     },
 };
 
-const W: i32 = 40;
-const H: i32 = 20;
-
-struct Game {
-    snake: VecDeque<(i32, i32)>,
-    dir: (i32, i32),
-    food: (i32, i32),
-    over: bool,
-}
-
-impl Game {
-    fn new() -> Self {
-        let mut g = Game {
-            snake: VecDeque::from([(W / 2, H / 2)]),
-            dir: (1, 0),
-            food: (0, 0),
-            over: false,
-        };
-        g.spawn_food();
-        g
-    }
-
-    fn spawn_food(&mut self) {
-        loop {
-            let p = (rand::random_range(0..W), rand::random_range(0..H));
-            if !self.snake.contains(&p) {
-                self.food = p;
-                return;
-            }
-        }
-    }
-
-    fn step(&mut self) {
-        let (hx, hy) = self.snake[0];
-        let head = (hx + self.dir.0, hy + self.dir.1);
-        let hit_wall = head.0 < 0 || head.0 >= W || head.1 < 0 || head.1 >= H;
-        if hit_wall || self.snake.contains(&head) {
-            self.over = true;
-            return;
-        }
-        self.snake.push_front(head);
-        if head == self.food {
-            self.spawn_food();
-        } else {
-            self.snake.pop_back();
-        }
-    }
-
-    fn turn(&mut self, d: (i32, i32)) {
-        if d.0 != -self.dir.0 || d.1 != -self.dir.1 {
-            self.dir = d;
-        }
-    }
-}
-
 fn main() -> io::Result<()> {
     let mut terminal = ratatui::init();
-    let mut game = Game::new();
+    let mut game = Game::new(Mode::Fixed(5));
 
     loop {
         terminal.draw(|f| {
+            let status = format!(
+                "{}  level {}  apples {}  score {}",
+                game.mode.label(),
+                game.level(),
+                game.apples,
+                game.score
+            );
             let title = if game.over {
-                format!(" GAME OVER  score {}  q quit ", game.snake.len() - 1)
+                format!(" GAME OVER  {status}  q quit ")
             } else {
-                format!(" snake  score {}  q quit ", game.snake.len() - 1)
+                format!(" snake  {status}  q quit ")
             };
             let canvas = Canvas::default()
                 .block(Block::bordered().title(title))
@@ -90,16 +45,16 @@ fn main() -> io::Result<()> {
             f.render_widget(canvas, f.area());
         })?;
 
-        if event::poll(Duration::from_millis(120))? {
-            if let Event::Key(k) = event::read()? {
-                match k.code {
-                    KeyCode::Char('q') | KeyCode::Esc => break,
-                    KeyCode::Up => game.turn((0, 1)),
-                    KeyCode::Down => game.turn((0, -1)),
-                    KeyCode::Left => game.turn((-1, 0)),
-                    KeyCode::Right => game.turn((1, 0)),
-                    _ => {}
-                }
+        if event::poll(game.tick())?
+            && let Event::Key(k) = event::read()?
+        {
+            match k.code {
+                KeyCode::Char('q') | KeyCode::Esc => break,
+                KeyCode::Up => game.turn((0, 1)),
+                KeyCode::Down => game.turn((0, -1)),
+                KeyCode::Left => game.turn((-1, 0)),
+                KeyCode::Right => game.turn((1, 0)),
+                _ => {}
             }
         }
         if !game.over {
@@ -109,23 +64,4 @@ fn main() -> io::Result<()> {
 
     ratatui::restore();
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn eats_grows_and_dies_on_wall() {
-        let mut g = Game::new();
-        g.food = (W / 2 + 1, H / 2);
-        g.step();
-        assert_eq!(g.snake.len(), 2);
-        g.turn((-1, 0)); // reverse ignored
-        assert_eq!(g.dir, (1, 0));
-        for _ in 0..W {
-            g.step();
-        }
-        assert!(g.over);
-    }
 }
