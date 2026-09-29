@@ -52,6 +52,9 @@ pub struct Game {
     pub mode: Mode,
     pub apples: u32,
     pub score: u32,
+    /// Cell the tail left on the last step, None if the snake grew instead.
+    /// The renderer uses it to draw the tail halfway between ticks.
+    pub last_tail: Option<(i32, i32)>,
     /// Direction of the last step. turn() checks reversal against this.
     moved: (i32, i32),
 }
@@ -66,6 +69,7 @@ impl Game {
             mode,
             apples: 0,
             score: 0,
+            last_tail: None,
             moved: (1, 0),
         };
         g.spawn_food();
@@ -106,13 +110,14 @@ impl Game {
         }
         self.moved = self.dir;
         self.snake.push_front(head);
-        if head == self.food {
+        self.last_tail = if head == self.food {
             self.score += self.level() as u32;
             self.apples += 1;
             self.spawn_food();
+            None
         } else {
-            self.snake.pop_back();
-        }
+            self.snake.pop_back()
+        };
     }
 
     /// Ignore a reversal of the last step, even across several turns in one tick.
@@ -145,6 +150,17 @@ mod tests {
             g.step();
         }
         assert!(g.over);
+    }
+
+    #[test]
+    fn last_tail_is_the_vacated_cell_or_none_when_growing() {
+        let mut g = Game::new(Mode::Fixed(5));
+        feed(&mut g);
+        assert_eq!(g.last_tail, None);
+        let tail = *g.snake.back().unwrap();
+        g.food = (0, 0);
+        g.step();
+        assert_eq!(g.last_tail, Some(tail));
     }
 
     #[test]
