@@ -19,6 +19,7 @@ The border title shows mode, level, apples, and score.
 
 Game over: shows final score. `r` returns to the menu. `q` quits.
 If the score qualifies for the top 10, the name entry screen comes first, then game over.
+Before either, the dead snake blinks for about 1.2 seconds.
 
 Name entry: type `A` to `Z` (any case, stored upper case), Backspace removes the last letter,
 Enter confirms. Enter is ignored unless exactly 3 letters are entered. Letters beyond 3 are ignored.
@@ -44,6 +45,24 @@ A score qualifies when it is above 0 and either fewer than 10 named rows exist o
 
 If the database file exists but cannot be opened as a SQLite database, rename it to `snake.db.broken-<unix seconds>` and create a fresh one. Never delete it.
 If the config directory cannot be created or written, exit with an error before entering the terminal UI.
+
+## Look
+
+Confirmed with the operator on 2026-09-29 from a colored mockup. Arcade direction.
+
+Colors are xterm 256 indexes only, so every terminal shows the same thing. Terracotta 173 and 209 for accents and score digits, amber 214 for HUD labels, phosphor green 118 to 28 for the snake fading head to tail, yellow 226 head, red 196 apple, gold, silver and bronze for the top three ranks, greys 233 to 254 for chrome and text. Glyphs are Unicode block elements and geometric shapes, no icon font.
+
+Menu: one double-line panel. Block letter SNAKE logo with a drop shadow, marquee stripe under it, top 10 with star marks on the podium and dot placeholders for empty rows, a blinking PRESS 1-9 OR V TO START line, and a speed picker with one chip per level over a bar ramp. Key hints sit as chips in the bottom border.
+
+Playing: board on the left in a double-line panel with a checkerboard field, HUD panel on the right with 1UP score in block digits, HI-SCORE from the top table, level meter out of 9, apples, mode and tick. The snake is solid blocks with a pointed head that faces its direction of travel. Food is a two-cell pixel apple that blinks every tick.
+
+Motion: the timer fires at half the tick. After a step the renderer draws the head half a cell ahead of the neck and the tail half a cell out of its old cell, then the half tick settles the frame on the cells. Horizontal halves are one column, vertical halves are half blocks.
+
+Death: on collision the snake blinks rust six half-periods of 200ms with keys ignored except `q`, then the game is recorded and the modal appears.
+
+Name entry and game over are modals over the frozen, dimmed board. Game over shows the score in block digits and a `new best` tag when the score made the table. Name entry shows the score, the rank it will take, and three letter boxes.
+
+Minimum terminal is 108 by 28.
 
 ## Layout
 
