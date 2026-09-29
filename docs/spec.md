@@ -14,7 +14,7 @@ Start screen (menu): shows the top 10 table and a speed picker.
 - `q`: quit.
 - One line of help text explains scoring: an apple is worth the current level in points.
 
-Playing: arrow keys steer. Reversing direction is ignored. `q` quits the program.
+Playing: arrow keys steer. Reversing direction is ignored. `q` quits the program. Holding the arrow for the current direction doubles the speed (halves the tick) until it is released.
 The border title shows mode, level, apples, and score.
 
 Game over: shows final score. `r` returns to the menu. `q` quits.
@@ -27,6 +27,8 @@ Enter confirms. Enter is ignored unless exactly 3 letters are entered. Letters b
 ## Speed
 
 Grid is 40 by 20. Tick duration in milliseconds is `220 - level * 20`, so level 1 is 200ms and level 9 is 40ms.
+
+Hold detection: where the terminal supports the kitty keyboard protocol, the game turns on key release events and a key is held from press to release. Elsewhere it uses OS key repeat: a second press of the same arrow within 150ms of the previous one starts the boost, and it ends 150ms after the last repeat. So in those terminals the boost starts after the OS repeat delay.
 Fixed mode keeps its level. Variable mode starts at level 1 and rises one level every 3 apples, capped at 9.
 
 ## Scoring
