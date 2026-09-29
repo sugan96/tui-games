@@ -138,12 +138,12 @@ mod tests {
             ScoreRow {
                 name: "ABC".into(),
                 score: 42,
-                mode: Mode::Fixed(5),
+                variant: "fixed 5".into(),
             },
             ScoreRow {
                 name: "XYZ".into(),
                 score: 7,
-                mode: Mode::Variable,
+                variant: "variable".into(),
             },
         ]
     }

@@ -69,7 +69,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
             format!("{:>7}", r.score),
             if i < 3 { style } else { theme::TEXT },
         );
-        buf.set_string(tx + 25, row, r.mode.label(), theme::MUTED);
+        buf.set_string(tx + 25, row, &r.variant, theme::MUTED);
     }
 
     if app.ticks % 4 != 3 {

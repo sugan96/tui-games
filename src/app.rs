@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use ratatui::crossterm::event::{KeyCode, KeyEventKind};
 
 use crate::{
-    db::{Db, GameRecord, ScoreRow, TOP_N},
+    db::{Db, ScoreRow, TOP_N},
     game::{Game, Mode},
     input::Input,
 };
@@ -63,6 +63,9 @@ fn dir_key(dir: (i32, i32)) -> KeyCode {
     }
 }
 
+/// Score table key.
+pub const GAME: &str = "snake";
+
 pub const NAME_LEN: usize = 3;
 pub const IDLE_TICK: Duration = Duration::from_millis(250);
 /// Half-periods of the death blink and the length of each.
@@ -75,7 +78,7 @@ impl App {
         Ok(App {
             screen: Screen::Menu,
             game: Game::new(Mode::Variable),
-            top: db.top_scores(TOP_N)?,
+            top: db.top(GAME, TOP_N)?,
             quit: false,
             ticks: 0,
             settled: true,
@@ -114,14 +117,14 @@ impl App {
                 }
                 KeyCode::Enter if name.len() == NAME_LEN => {
                     self.db.set_name(*game_id, name)?;
-                    self.top = self.db.top_scores(TOP_N)?;
+                    self.top = self.db.top(GAME, TOP_N)?;
                     self.screen = Screen::GameOver { ranked: true };
                 }
                 _ => {}
             },
             Screen::GameOver { .. } => match key {
                 KeyCode::Char('r') => {
-                    self.top = self.db.top_scores(TOP_N)?;
+                    self.top = self.db.top(GAME, TOP_N)?;
                     self.screen = Screen::Menu;
                 }
                 KeyCode::Char('q') => self.quit = true,
@@ -147,12 +150,8 @@ impl App {
             Screen::Dying { left } if *left > 1 => *left -= 1,
             Screen::Dying { .. } => {
                 let g = &self.game;
-                let game_id = self.db.record_game(&GameRecord {
-                    score: g.score,
-                    apples: g.apples,
-                    mode: g.mode,
-                })?;
-                self.screen = if self.db.qualifies(g.score)? {
+                let game_id = self.db.record(GAME, &g.mode.label(), g.score)?;
+                self.screen = if self.db.qualifies(GAME, g.score)? {
                     Screen::NameEntry {
                         game_id,
                         name: String::new(),
@@ -326,7 +325,7 @@ mod tests {
             assert!(matches!(a.screen, Screen::Dying { .. }));
         }
         assert_eq!(a.game.snake[0], head);
-        assert!(a.db.top_scores(TOP_N).unwrap().is_empty());
+        assert!(a.db.top(GAME, TOP_N).unwrap().is_empty());
         a.on_tick().unwrap();
         assert!(matches!(a.screen, Screen::GameOver { .. }));
         press(&mut a, "q");
@@ -378,7 +377,7 @@ mod tests {
         assert!(name.is_empty());
         // The row exists: naming it succeeds only when the id is present.
         a.db.set_name(game_id, "ROW").unwrap();
-        assert_eq!(a.db.top_scores(TOP_N).unwrap()[0].score, 7);
+        assert_eq!(a.db.top(GAME, TOP_N).unwrap()[0].score, 7);
     }
 
     #[test]
@@ -401,7 +400,7 @@ mod tests {
             vec![ScoreRow {
                 name: "ABQ".into(),
                 score: 7,
-                mode: Mode::Fixed(5)
+                variant: "fixed 5".into()
             }]
         );
     }

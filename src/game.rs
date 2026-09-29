@@ -12,23 +12,6 @@ pub enum Mode {
 }
 
 impl Mode {
-    /// 0 for Variable, 1 to 9 for Fixed.
-    pub fn as_db(self) -> i64 {
-        match self {
-            Mode::Variable => 0,
-            Mode::Fixed(n) => n as i64,
-        }
-    }
-
-    /// Inverse of as_db. None for anything else.
-    pub fn from_db(v: i64) -> Option<Mode> {
-        match v {
-            0 => Some(Mode::Variable),
-            1..=9 => Some(Mode::Fixed(v as u8)),
-            _ => None,
-        }
-    }
-
     /// "variable" or "fixed 5".
     pub fn label(self) -> String {
         match self {
@@ -177,13 +160,6 @@ mod tests {
     fn tick_bounds() {
         assert_eq!(tick_for_level(1), Duration::from_millis(200));
         assert_eq!(tick_for_level(9), Duration::from_millis(40));
-    }
-
-    #[test]
-    fn mode_db_round_trip() {
-        assert_eq!(Mode::from_db(Mode::Fixed(7).as_db()), Some(Mode::Fixed(7)));
-        assert_eq!(Mode::from_db(0), Some(Mode::Variable));
-        assert_eq!(Mode::from_db(10), None);
     }
 
     #[test]
