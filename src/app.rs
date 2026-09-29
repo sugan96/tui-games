@@ -1,6 +1,6 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use ratatui::crossterm::event::KeyCode;
+use ratatui::crossterm::event::{KeyCode, KeyEventKind};
 
 use crate::{
     db::{Db, GameRecord, ScoreRow, TOP_N},
@@ -34,7 +34,70 @@ pub struct App {
     /// False for the first half tick after a step, so the renderer draws the
     /// snake halfway to its new cells. True once the half tick has passed.
     pub settled: bool,
+    /// True while the arrow for the current direction is held. Halves the game tick.
+    /// main refreshes it with refresh_boost before each frame.
+    pub boost: bool,
+    /// The terminal sends key release events, so Hold uses them instead of key repeat.
+    pub release_events: bool,
+    hold: Hold,
     db: Db,
+}
+
+/// Which arrow key is held down.
+/// With release events a key is held from Press to Release. Without them the
+/// OS key repeat is the only signal: a Press of the same arrow within
+/// REPEAT_WINDOW of the previous one means held, and the hold ends
+/// REPEAT_WINDOW after the last repeat.
+#[derive(Default)]
+struct Hold {
+    dir: Option<(i32, i32)>,
+    /// None while waiting for a release event.
+    until: Option<Instant>,
+    last_press: Option<((i32, i32), Instant)>,
+}
+
+/// Longest gap between OS key repeats that still counts as held. macOS repeats
+/// every 15 to 120ms at the default settings. Raise it if a slow repeat rate never boosts.
+pub const REPEAT_WINDOW: Duration = Duration::from_millis(150);
+
+impl Hold {
+    fn press(&mut self, dir: (i32, i32), now: Instant, release_events: bool) {
+        if release_events {
+            self.dir = Some(dir);
+            self.until = None;
+            return;
+        }
+        let repeat = self
+            .last_press
+            .is_some_and(|(d, t)| d == dir && now - t <= REPEAT_WINDOW);
+        self.dir = repeat.then_some(dir);
+        self.until = Some(now + REPEAT_WINDOW);
+        self.last_press = Some((dir, now));
+    }
+
+    fn release(&mut self, dir: (i32, i32)) {
+        if self.dir == Some(dir) {
+            self.dir = None;
+        }
+    }
+
+    fn held(&self, now: Instant) -> Option<(i32, i32)> {
+        match self.until {
+            Some(u) if now >= u => None,
+            _ => self.dir,
+        }
+    }
+}
+
+/// Grid direction of an arrow key, y up.
+fn arrow_dir(key: KeyCode) -> Option<(i32, i32)> {
+    match key {
+        KeyCode::Up => Some((0, 1)),
+        KeyCode::Down => Some((0, -1)),
+        KeyCode::Left => Some((-1, 0)),
+        KeyCode::Right => Some((1, 0)),
+        _ => None,
+    }
 }
 
 pub const NAME_LEN: usize = 3;
@@ -53,6 +116,9 @@ impl App {
             quit: false,
             ticks: 0,
             settled: true,
+            boost: false,
+            release_events: false,
+            hold: Hold::default(),
             db,
         })
     }
@@ -65,14 +131,13 @@ impl App {
                 KeyCode::Char('q') => self.quit = true,
                 _ => {}
             },
-            Screen::Playing => match key {
-                KeyCode::Up => self.game.turn((0, 1)),
-                KeyCode::Down => self.game.turn((0, -1)),
-                KeyCode::Left => self.game.turn((-1, 0)),
-                KeyCode::Right => self.game.turn((1, 0)),
-                KeyCode::Char('q') => self.quit = true,
-                _ => {}
-            },
+            Screen::Playing => {
+                if let Some(d) = arrow_dir(key) {
+                    self.game.turn(d);
+                } else if key == KeyCode::Char('q') {
+                    self.quit = true;
+                }
+            }
             Screen::Dying { .. } => {
                 if key == KeyCode::Char('q') {
                     self.quit = true;
@@ -149,10 +214,39 @@ impl App {
         self.on_tick()
     }
 
+    /// Feeds every key event, including repeats and releases, to the hold tracker.
+    /// Only arrows while Playing count.
+    pub fn track_hold(&mut self, key: KeyCode, kind: KeyEventKind, now: Instant) {
+        let Some(dir) = arrow_dir(key) else { return };
+        if !matches!(self.screen, Screen::Playing) {
+            return;
+        }
+        match kind {
+            KeyEventKind::Press => self.hold.press(dir, now, self.release_events),
+            KeyEventKind::Release => self.hold.release(dir),
+            KeyEventKind::Repeat => {}
+        }
+    }
+
+    /// Boost while Playing and the held arrow matches the current direction.
+    pub fn refresh_boost(&mut self, now: Instant) {
+        self.boost =
+            matches!(self.screen, Screen::Playing) && self.hold.held(now) == Some(self.game.dir);
+    }
+
+    /// The game tick, halved while boosting.
+    pub fn game_tick(&self) -> Duration {
+        if self.boost {
+            self.game.tick() / 2
+        } else {
+            self.game.tick()
+        }
+    }
+
     /// Half the game tick while Playing, BLINK_TICK while Dying, IDLE_TICK otherwise.
     pub fn tick_rate(&self) -> Duration {
         match self.screen {
-            Screen::Playing => self.game.tick() / 2,
+            Screen::Playing => self.game_tick() / 2,
             Screen::Dying { .. } => BLINK_TICK,
             _ => IDLE_TICK,
         }
@@ -161,6 +255,8 @@ impl App {
     fn start(&mut self, mode: Mode) {
         self.game = Game::new(mode);
         self.settled = true;
+        self.hold = Hold::default();
+        self.boost = false;
         self.screen = Screen::Playing;
     }
 }
@@ -169,6 +265,8 @@ impl App {
 mod tests {
     use super::*;
     use crate::game::H;
+
+    const R: (i32, i32) = (1, 0);
 
     fn app() -> App {
         App::new(Db::open_in_memory().unwrap()).unwrap()
@@ -295,6 +393,54 @@ mod tests {
         a.on_timer().unwrap();
         assert!(a.settled);
         assert_eq!(a.game.snake[0], head, "half tick does not move the snake");
+    }
+
+    #[test]
+    fn key_repeat_holds_until_repeats_stop() {
+        let ms = |n| Duration::from_millis(n);
+        let t = Instant::now();
+        let mut h = Hold::default();
+        h.press(R, t, false);
+        assert_eq!(h.held(t), None, "a single tap is not a hold");
+        h.press(R, t + ms(400), false); // first repeat after the OS delay
+        assert_eq!(h.held(t + ms(400)), None);
+        h.press(R, t + ms(450), false);
+        assert_eq!(h.held(t + ms(500)), Some(R));
+        assert_eq!(h.held(t + ms(600)), None, "repeats stopped");
+        h.press(R, t + ms(580), false);
+        assert_eq!(h.held(t + ms(590)), Some(R));
+        h.press((0, 1), t + ms(640), false);
+        assert_eq!(h.held(t + ms(650)), None, "another arrow ends the hold");
+    }
+
+    #[test]
+    fn release_events_hold_from_press_to_release() {
+        let t = Instant::now();
+        let mut h = Hold::default();
+        h.press(R, t, true);
+        assert_eq!(h.held(t + Duration::from_secs(5)), Some(R));
+        h.release((0, 1));
+        assert_eq!(h.held(t), Some(R), "releasing another arrow keeps the hold");
+        h.release(R);
+        assert_eq!(h.held(t), None);
+    }
+
+    #[test]
+    fn holding_the_current_direction_halves_the_tick() {
+        let mut a = app();
+        a.release_events = true;
+        press(&mut a, "5");
+        let normal = a.tick_rate();
+        let t = Instant::now();
+        a.track_hold(KeyCode::Up, KeyEventKind::Press, t);
+        a.refresh_boost(t);
+        assert!(!a.boost, "held arrow is not the current direction");
+        a.track_hold(KeyCode::Right, KeyEventKind::Press, t);
+        a.refresh_boost(t);
+        assert_eq!(a.tick_rate(), normal / 2);
+        a.track_hold(KeyCode::Right, KeyEventKind::Release, t);
+        a.refresh_boost(t);
+        assert_eq!(a.tick_rate(), normal);
     }
 
     #[test]

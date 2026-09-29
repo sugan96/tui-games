@@ -231,7 +231,7 @@ fn paint_hud(buf: &mut Buffer, inner: Rect, app: &App, dim: bool) {
     buf.set_string(right_x(mode), y + 15, mode, s(theme::TEXT));
 
     buf.set_string(x, y + 16, "SPEED", s(theme::MUTED));
-    let speed = format!("{}ms", game.tick().as_millis());
+    let speed = format!("{}ms", app.game_tick().as_millis());
     buf.set_string(right_x(&speed), y + 16, &speed, s(theme::TEXT));
 }
 
