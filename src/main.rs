@@ -1,6 +1,7 @@
 mod app;
 mod db;
 mod game;
+mod input;
 mod ui;
 
 use app::{App, Screen};
@@ -41,7 +42,7 @@ fn run(
     release_events: bool,
 ) -> anyhow::Result<()> {
     let mut app = App::new(db)?;
-    app.release_events = release_events;
+    app.input = input::Input::new(release_events);
     // Deadline for the next step, so input events do not push the step back.
     let mut next = Instant::now() + app.tick_rate();
     while !app.quit {

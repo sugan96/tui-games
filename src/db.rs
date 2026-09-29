@@ -101,9 +101,10 @@ impl Db {
 
     /// Sets the name on a row.
     pub fn set_name(&self, id: i64, name: &str) -> Result<()> {
-        let n = self
-            .conn
-            .execute("UPDATE games SET name = ?1 WHERE id = ?2", params![name, id])?;
+        let n = self.conn.execute(
+            "UPDATE games SET name = ?1 WHERE id = ?2",
+            params![name, id],
+        )?;
         anyhow::ensure!(n == 1, "no game with id {id}");
         Ok(())
     }
@@ -115,7 +116,11 @@ impl Db {
              ORDER BY score DESC, id ASC LIMIT ?1",
         )?;
         let rows = stmt.query_map([n as i64], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, u32>(1)?, r.get::<_, i64>(2)?))
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, u32>(1)?,
+                r.get::<_, i64>(2)?,
+            ))
         })?;
         rows.map(|row| {
             let (name, score, mode) = row?;
@@ -138,7 +143,11 @@ mod tests {
 
     fn add(db: &Db, name: &str, score: u32) -> i64 {
         let id = db
-            .record_game(&GameRecord { score, apples: 1, mode: Mode::Fixed(5) })
+            .record_game(&GameRecord {
+                score,
+                apples: 1,
+                mode: Mode::Fixed(5),
+            })
             .unwrap();
         db.set_name(id, name).unwrap();
         id
@@ -148,13 +157,21 @@ mod tests {
     fn unnamed_rows_are_hidden_until_named() {
         let db = Db::open_in_memory().unwrap();
         let id = db
-            .record_game(&GameRecord { score: 7, apples: 2, mode: Mode::Variable })
+            .record_game(&GameRecord {
+                score: 7,
+                apples: 2,
+                mode: Mode::Variable,
+            })
             .unwrap();
         assert!(db.top_scores(TOP_N).unwrap().is_empty());
         db.set_name(id, "ABC").unwrap();
         assert_eq!(
             db.top_scores(TOP_N).unwrap(),
-            vec![ScoreRow { name: "ABC".into(), score: 7, mode: Mode::Variable }]
+            vec![ScoreRow {
+                name: "ABC".into(),
+                score: 7,
+                mode: Mode::Variable
+            }]
         );
     }
 
@@ -165,7 +182,12 @@ mod tests {
         add(&db, "FST", 5);
         add(&db, "SND", 5);
         add(&db, "TOP", 9);
-        let names: Vec<String> = db.top_scores(3).unwrap().into_iter().map(|r| r.name).collect();
+        let names: Vec<String> = db
+            .top_scores(3)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.name)
+            .collect();
         assert_eq!(names, ["TOP", "FST", "SND"]);
     }
 
@@ -205,16 +227,30 @@ mod tests {
     fn mode_round_trips() {
         let db = Db::open_in_memory().unwrap();
         for m in [Mode::Variable, Mode::Fixed(1), Mode::Fixed(9)] {
-            let id = db.record_game(&GameRecord { score: 3, apples: 0, mode: m }).unwrap();
+            let id = db
+                .record_game(&GameRecord {
+                    score: 3,
+                    apples: 0,
+                    mode: m,
+                })
+                .unwrap();
             db.set_name(id, "MOD").unwrap();
         }
-        let modes: Vec<Mode> = db.top_scores(TOP_N).unwrap().into_iter().map(|r| r.mode).collect();
+        let modes: Vec<Mode> = db
+            .top_scores(TOP_N)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.mode)
+            .collect();
         assert_eq!(modes, [Mode::Variable, Mode::Fixed(1), Mode::Fixed(9)]);
     }
 
     #[test]
     fn corrupt_file_is_moved_aside() {
-        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let dir = std::env::temp_dir().join(format!("snake-test-{}-{nanos}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("snake.db");
@@ -228,7 +264,11 @@ mod tests {
         let broken = std::fs::read_dir(&dir)
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| e.file_name().to_string_lossy().starts_with("snake.db.broken-"))
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("snake.db.broken-")
+            })
             .count();
         assert_eq!(broken, 1);
         std::fs::remove_dir_all(&dir).unwrap();
