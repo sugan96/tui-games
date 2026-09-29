@@ -24,7 +24,7 @@ fn run(terminal: &mut ratatui::DefaultTerminal, db: Db) -> anyhow::Result<()> {
         terminal.draw(|f| ui::draw(f, &app))?;
         let now = Instant::now();
         if now >= next {
-            app.on_tick()?;
+            app.on_timer()?;
             next = now + app.tick_rate();
         } else if event::poll(next - now)?
             && let Event::Key(k) = event::read()?

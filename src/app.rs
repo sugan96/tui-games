@@ -10,8 +10,18 @@ use crate::{
 pub enum Screen {
     Menu,
     Playing,
-    NameEntry { game_id: i64, name: String },
-    GameOver,
+    /// The snake blinks `left` more half-periods before the result is recorded.
+    Dying {
+        left: u8,
+    },
+    NameEntry {
+        game_id: i64,
+        name: String,
+    },
+    /// `ranked` is true when the score made the table and a name was entered.
+    GameOver {
+        ranked: bool,
+    },
 }
 
 pub struct App {
@@ -19,11 +29,19 @@ pub struct App {
     pub game: Game,
     pub top: Vec<ScoreRow>,
     pub quit: bool,
+    /// Timer ticks since start, on every screen. Drives blinking.
+    pub ticks: u64,
+    /// False for the first half tick after a step, so the renderer draws the
+    /// snake halfway to its new cells. True once the half tick has passed.
+    pub settled: bool,
     db: Db,
 }
 
 pub const NAME_LEN: usize = 3;
 pub const IDLE_TICK: Duration = Duration::from_millis(250);
+/// Half-periods of the death blink and the length of each.
+pub const BLINKS: u8 = 6;
+pub const BLINK_TICK: Duration = Duration::from_millis(200);
 
 impl App {
     /// Loads the top table. Starts on Menu with a placeholder Game::new(Mode::Variable).
@@ -33,6 +51,8 @@ impl App {
             game: Game::new(Mode::Variable),
             top: db.top_scores(TOP_N)?,
             quit: false,
+            ticks: 0,
+            settled: true,
             db,
         })
     }
@@ -53,6 +73,11 @@ impl App {
                 KeyCode::Char('q') => self.quit = true,
                 _ => {}
             },
+            Screen::Dying { .. } => {
+                if key == KeyCode::Char('q') {
+                    self.quit = true;
+                }
+            }
             Screen::NameEntry { game_id, name } => match key {
                 KeyCode::Char(c) if c.is_ascii_alphabetic() && name.len() < NAME_LEN => {
                     name.push(c.to_ascii_uppercase());
@@ -63,11 +88,11 @@ impl App {
                 KeyCode::Enter if name.len() == NAME_LEN => {
                     self.db.set_name(*game_id, name)?;
                     self.top = self.db.top_scores(TOP_N)?;
-                    self.screen = Screen::GameOver;
+                    self.screen = Screen::GameOver { ranked: true };
                 }
                 _ => {}
             },
-            Screen::GameOver => match key {
+            Screen::GameOver { .. } => match key {
                 KeyCode::Char('r') => {
                     self.top = self.db.top_scores(TOP_N)?;
                     self.screen = Screen::Menu;
@@ -79,39 +104,63 @@ impl App {
         Ok(())
     }
 
-    /// Playing: game.step(); if the game just ended, record it and move to NameEntry or GameOver.
-    /// Other screens: no-op.
+    /// Playing: game.step(); a collision starts the death blink.
+    /// Dying: count the blink down; at zero record the game and move to
+    /// NameEntry or GameOver. Other screens: only the tick counter moves.
     pub fn on_tick(&mut self) -> anyhow::Result<()> {
-        if !matches!(self.screen, Screen::Playing) {
-            return Ok(());
-        }
-        self.game.step();
-        if self.game.over {
-            let g = &self.game;
-            let game_id = self.db.record_game(&GameRecord {
-                score: g.score,
-                apples: g.apples,
-                mode: g.mode,
-            })?;
-            self.screen = if self.db.qualifies(g.score)? {
-                Screen::NameEntry { game_id, name: String::new() }
-            } else {
-                Screen::GameOver
-            };
+        self.ticks += 1;
+        match &mut self.screen {
+            Screen::Playing => {
+                self.game.step();
+                self.settled = false;
+                if self.game.over {
+                    self.screen = Screen::Dying { left: BLINKS };
+                }
+            }
+            Screen::Dying { left } if *left > 1 => *left -= 1,
+            Screen::Dying { .. } => {
+                let g = &self.game;
+                let game_id = self.db.record_game(&GameRecord {
+                    score: g.score,
+                    apples: g.apples,
+                    mode: g.mode,
+                })?;
+                self.screen = if self.db.qualifies(g.score)? {
+                    Screen::NameEntry {
+                        game_id,
+                        name: String::new(),
+                    }
+                } else {
+                    Screen::GameOver { ranked: false }
+                };
+            }
+            _ => {}
         }
         Ok(())
     }
 
-    /// game.tick() while Playing, IDLE_TICK otherwise.
+    /// The main loop's timer. While playing, every other firing is a render-only
+    /// half tick that settles the interpolated frame; the rest step the game.
+    pub fn on_timer(&mut self) -> anyhow::Result<()> {
+        if matches!(self.screen, Screen::Playing) && !self.settled {
+            self.settled = true;
+            return Ok(());
+        }
+        self.on_tick()
+    }
+
+    /// Half the game tick while Playing, BLINK_TICK while Dying, IDLE_TICK otherwise.
     pub fn tick_rate(&self) -> Duration {
         match self.screen {
-            Screen::Playing => self.game.tick(),
+            Screen::Playing => self.game.tick() / 2,
+            Screen::Dying { .. } => BLINK_TICK,
             _ => IDLE_TICK,
         }
     }
 
     fn start(&mut self, mode: Mode) {
         self.game = Game::new(mode);
+        self.settled = true;
         self.screen = Screen::Playing;
     }
 }
@@ -139,7 +188,11 @@ mod tests {
         app.game.dir = (0, 1); // head starts at y = H / 2, the top wall at y = H is nearest
         for _ in 0..H {
             app.on_tick().unwrap();
-            if !matches!(app.screen, Screen::Playing) {
+            if let Screen::Dying { left } = app.screen {
+                assert_eq!(left, BLINKS);
+                for _ in 0..BLINKS {
+                    app.on_tick().unwrap();
+                }
                 return;
             }
         }
@@ -159,7 +212,7 @@ mod tests {
         press(&mut a, "5");
         assert!(matches!(a.screen, Screen::Playing));
         assert_eq!(a.game.mode, Mode::Fixed(5));
-        assert_eq!(a.tick_rate(), a.game.tick());
+        assert_eq!(a.tick_rate(), a.game.tick() / 2);
     }
 
     #[test]
@@ -199,7 +252,49 @@ mod tests {
     fn zero_score_death_goes_to_game_over() {
         let mut a = app();
         die_with_score(&mut a, 0);
-        assert!(matches!(a.screen, Screen::GameOver));
+        assert!(matches!(a.screen, Screen::GameOver { ranked: false }));
+    }
+
+    #[test]
+    fn death_blinks_before_recording_and_ignores_steering() {
+        let mut a = app();
+        press(&mut a, "5");
+        a.game.dir = (0, 1);
+        a.game.food = (0, 0);
+        while matches!(a.screen, Screen::Playing) {
+            a.on_tick().unwrap();
+        }
+        assert!(matches!(a.screen, Screen::Dying { left: BLINKS }));
+        assert_eq!(a.tick_rate(), BLINK_TICK);
+        let head = a.game.snake[0];
+        a.handle_key(KeyCode::Left).unwrap();
+        for _ in 0..BLINKS - 1 {
+            a.on_tick().unwrap();
+            assert!(matches!(a.screen, Screen::Dying { .. }));
+        }
+        assert_eq!(a.game.snake[0], head);
+        assert!(a.db.top_scores(TOP_N).unwrap().is_empty());
+        a.on_tick().unwrap();
+        assert!(matches!(a.screen, Screen::GameOver { .. }));
+        press(&mut a, "q");
+        assert!(a.quit);
+    }
+
+    #[test]
+    fn timer_alternates_half_tick_and_step_while_playing() {
+        let mut a = app();
+        a.on_timer().unwrap();
+        assert_eq!(a.ticks, 1, "idle screens step every timer");
+        press(&mut a, "5");
+        assert!(a.settled);
+        let head = a.game.snake[0];
+        a.on_timer().unwrap();
+        assert!(!a.settled);
+        assert_ne!(a.game.snake[0], head);
+        let head = a.game.snake[0];
+        a.on_timer().unwrap();
+        assert!(a.settled);
+        assert_eq!(a.game.snake[0], head, "half tick does not move the snake");
     }
 
     #[test]
@@ -229,10 +324,14 @@ mod tests {
         assert_eq!(name(&a), "ABQ");
         assert!(!a.quit);
         a.handle_key(KeyCode::Enter).unwrap();
-        assert!(matches!(a.screen, Screen::GameOver));
+        assert!(matches!(a.screen, Screen::GameOver { ranked: true }));
         assert_eq!(
             a.top,
-            vec![ScoreRow { name: "ABQ".into(), score: 7, mode: Mode::Fixed(5) }]
+            vec![ScoreRow {
+                name: "ABQ".into(),
+                score: 7,
+                mode: Mode::Fixed(5)
+            }]
         );
     }
 

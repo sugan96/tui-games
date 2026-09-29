@@ -10,9 +10,9 @@ use crate::app::{App, Screen};
 pub fn draw(frame: &mut Frame, app: &App) {
     match app.screen {
         Screen::Menu => menu::draw(frame, app),
-        Screen::Playing => play::draw(frame, app),
+        Screen::Playing | Screen::Dying { .. } => play::draw(frame, app),
         Screen::NameEntry { .. } => name_entry::draw(frame, app),
-        Screen::GameOver => game_over::draw(frame, app),
+        Screen::GameOver { .. } => game_over::draw(frame, app),
     }
 }
 
@@ -96,7 +96,7 @@ mod tests {
         let mut a = app();
         a.game.score = 12;
         a.game.apples = 4;
-        a.screen = Screen::GameOver;
+        a.screen = Screen::GameOver { ranked: false };
         let s = render(&a);
         for want in [" game over ", "score 12", "apples 4", "variable", "r  menu", "q  quit"] {
             assert!(s.contains(want), "missing {want:?} in\n{s}");
