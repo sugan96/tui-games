@@ -22,7 +22,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     frame.render_widget(Clear, area);
     frame.render_widget(block, area);
 
-    let digits = font::render(&g.score.to_string());
+    let digits = font::render_wide(&g.score.to_string());
     let dx = inner.x + (inner.width - digits[0].chars().count() as u16) / 2;
     for (i, row) in digits.iter().enumerate() {
         frame

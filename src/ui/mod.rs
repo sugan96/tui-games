@@ -269,6 +269,7 @@ mod tests {
             &s,
             &[
                 "1UP",
+                "    ██ ██████",
                 "HI-SCORE     42  ABC",
                 "LEVEL          3 / 9",
                 "▮ ▮ ▮ ▮ ▮ ▮ ▮ ▮ ▮",
@@ -346,7 +347,7 @@ mod tests {
             &s,
             &[
                 "GAME OVER",
-                "  █ ███",
+                "    ██ ██████",
                 "★ new best   ·   ▟▙ 4 apples   ·   fixed 3",
                 "r  menu   q  quit",
             ],

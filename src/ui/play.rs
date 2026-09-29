@@ -182,9 +182,9 @@ fn paint_hud(buf: &mut Buffer, inner: Rect, app: &App, dim: bool) {
 
     buf.set_string(x, y, "1UP", s(theme::AMBER));
     let score = game.score.to_string();
-    // ponytail: block digits fit up to 5 digits in the panel, plain text beyond.
-    if score.len() <= 5 {
-        for (i, row) in font::render(&score).iter().enumerate() {
+    // ponytail: square-pixel digits fit up to 3 digits in the panel, plain text beyond.
+    if score.len() <= 3 {
+        for (i, row) in font::render_wide(&score).iter().enumerate() {
             buf.set_string(x + 1, y + 2 + i as u16, row, s(theme::ACCENT_HI));
         }
     } else {

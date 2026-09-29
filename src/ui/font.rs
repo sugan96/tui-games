@@ -24,6 +24,26 @@ fn glyph(c: char) -> [&'static str; ROWS] {
     }
 }
 
+/// Render text with square pixels: each pixel is two characters wide, one
+/// space between glyphs. A terminal cell is half as wide as it is tall, so
+/// this is what makes digits read as blocks instead of slivers.
+pub fn render_wide(text: &str) -> [String; ROWS] {
+    let mut out: [String; ROWS] = Default::default();
+    for (i, c) in text.chars().enumerate() {
+        let g = glyph(c);
+        for (row, line) in out.iter_mut().enumerate() {
+            if i > 0 {
+                line.push(' ');
+            }
+            for px in g[row].chars() {
+                line.push(px);
+                line.push(px);
+            }
+        }
+    }
+    out
+}
+
 /// Render text as ROWS lines, one space between glyphs.
 pub fn render(text: &str) -> [String; ROWS] {
     let mut out: [String; ROWS] = Default::default();
@@ -58,6 +78,20 @@ mod tests {
             );
             assert!(g.iter().any(|l| l.contains('█')), "{d} is blank");
         }
+    }
+
+    #[test]
+    fn wide_doubles_every_pixel() {
+        assert_eq!(
+            render_wide("14"),
+            [
+                "    ██ ██  ██",
+                "    ██ ██  ██",
+                "    ██ ██████",
+                "    ██     ██",
+                "    ██     ██"
+            ]
+        );
     }
 
     #[test]
