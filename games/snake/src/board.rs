@@ -12,23 +12,6 @@ pub enum Mode {
 }
 
 impl Mode {
-    /// 0 for Variable, 1 to 9 for Fixed.
-    pub fn as_db(self) -> i64 {
-        match self {
-            Mode::Variable => 0,
-            Mode::Fixed(n) => n as i64,
-        }
-    }
-
-    /// Inverse of as_db. None for anything else.
-    pub fn from_db(v: i64) -> Option<Mode> {
-        match v {
-            0 => Some(Mode::Variable),
-            1..=9 => Some(Mode::Fixed(v as u8)),
-            _ => None,
-        }
-    }
-
     /// "variable" or "fixed 5".
     pub fn label(self) -> String {
         match self {
@@ -44,7 +27,7 @@ pub fn tick_for_level(level: u8) -> Duration {
     Duration::from_millis(220 - level * 20)
 }
 
-pub struct Game {
+pub struct Board {
     pub snake: VecDeque<(i32, i32)>,
     pub dir: (i32, i32),
     pub food: (i32, i32),
@@ -59,9 +42,9 @@ pub struct Game {
     moved: (i32, i32),
 }
 
-impl Game {
-    pub fn new(mode: Mode) -> Game {
-        let mut g = Game {
+impl Board {
+    pub fn new(mode: Mode) -> Board {
+        let mut g = Board {
             snake: VecDeque::from([(W / 2, H / 2)]),
             dir: (1, 0),
             food: (0, 0),
@@ -132,7 +115,7 @@ impl Game {
 mod tests {
     use super::*;
 
-    fn feed(g: &mut Game) {
+    fn feed(g: &mut Board) {
         let (hx, hy) = g.snake[0];
         g.food = (hx + g.dir.0, hy + g.dir.1);
         g.step();
@@ -140,7 +123,7 @@ mod tests {
 
     #[test]
     fn eats_grows_and_dies_on_wall() {
-        let mut g = Game::new(Mode::Fixed(5));
+        let mut g = Board::new(Mode::Fixed(5));
         g.food = (W / 2 + 1, H / 2);
         g.step();
         assert_eq!(g.snake.len(), 2);
@@ -154,7 +137,7 @@ mod tests {
 
     #[test]
     fn last_tail_is_the_vacated_cell_or_none_when_growing() {
-        let mut g = Game::new(Mode::Fixed(5));
+        let mut g = Board::new(Mode::Fixed(5));
         feed(&mut g);
         assert_eq!(g.last_tail, None);
         let tail = *g.snake.back().unwrap();
@@ -165,7 +148,7 @@ mod tests {
 
     #[test]
     fn two_turns_in_one_tick_cannot_reverse() {
-        let mut g = Game::new(Mode::Fixed(1));
+        let mut g = Board::new(Mode::Fixed(1));
         g.snake = VecDeque::from([(W / 2, H / 2), (W / 2 - 1, H / 2)]);
         g.turn((0, -1));
         g.turn((-1, 0));
@@ -180,15 +163,8 @@ mod tests {
     }
 
     #[test]
-    fn mode_db_round_trip() {
-        assert_eq!(Mode::from_db(Mode::Fixed(7).as_db()), Some(Mode::Fixed(7)));
-        assert_eq!(Mode::from_db(0), Some(Mode::Variable));
-        assert_eq!(Mode::from_db(10), None);
-    }
-
-    #[test]
     fn variable_level_rises_every_three_apples_capped_at_nine() {
-        let mut g = Game::new(Mode::Variable);
+        let mut g = Board::new(Mode::Variable);
         // Start at the left edge so the snake has room for 30 apples in a row.
         g.snake = VecDeque::from([(0, H / 2)]);
         assert_eq!(g.level(), 1);
@@ -208,7 +184,7 @@ mod tests {
 
     #[test]
     fn apple_at_level_four_adds_four() {
-        let mut g = Game::new(Mode::Fixed(4));
+        let mut g = Board::new(Mode::Fixed(4));
         feed(&mut g);
         assert_eq!(g.apples, 1);
         assert_eq!(g.score, 4);
@@ -216,7 +192,7 @@ mod tests {
 
     #[test]
     fn variable_score_uses_level_before_the_apple_counts() {
-        let mut g = Game::new(Mode::Variable);
+        let mut g = Board::new(Mode::Variable);
         g.snake = VecDeque::from([(0, H / 2)]);
         for _ in 0..3 {
             feed(&mut g);

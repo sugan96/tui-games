@@ -50,15 +50,3 @@ pub const BODY: [Color; 4] = [c(118), c(82), c(40), c(28)];
 pub const FOOD: [Color; 2] = [c(196), c(203)];
 pub const DEAD: Color = c(131);
 pub const DEAD_HEAD: Color = c(167);
-/// One color per level under the speed picker, slow to fast.
-pub const SPEED_RAMP: [Color; 9] = [
-    c(28),
-    c(28),
-    c(40),
-    c(82),
-    c(82),
-    c(118),
-    c(214),
-    c(209),
-    c(196),
-];

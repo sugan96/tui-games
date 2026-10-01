@@ -1,17 +1,13 @@
 use ratatui::{Frame, text::Span, widgets::Clear};
 
-use super::{center_line, centered, font, modal, play, theme};
-use crate::app::{App, Screen};
+use super::{center_line, centered, font, modal, theme};
+use crate::game::Outcome;
 
 const WIDTH: u16 = 46;
 const HEIGHT: u16 = 12;
 
-pub fn draw(frame: &mut Frame, app: &App) {
-    play::draw_board(frame, app, play::Look::Dim);
-    let Screen::GameOver { ranked } = app.screen else {
-        return;
-    };
-    let g = &app.game;
+/// Modal over the dimmed game.
+pub fn draw(frame: &mut Frame, outcome: &Outcome, ranked: bool) {
     let area = centered(frame.area(), WIDTH, HEIGHT);
     let block = modal(
         "GAME OVER",
@@ -22,7 +18,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     frame.render_widget(Clear, area);
     frame.render_widget(block, area);
 
-    let digits = font::render_wide(&g.score.to_string());
+    let digits = font::render_wide(&outcome.score.to_string());
     let dx = inner.x + (inner.width - digits[0].chars().count() as u16) / 2;
     for (i, row) in digits.iter().enumerate() {
         frame
@@ -36,8 +32,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
         spans.push(Span::styled("★ new best", theme::GOLD));
         spans.push(sep.clone());
     }
-    spans.push(Span::styled(format!("▟▙ {} apples", g.apples), theme::TEXT));
+    spans.push(Span::styled(outcome.summary.as_str(), theme::TEXT));
     spans.push(sep);
-    spans.push(Span::styled(g.mode.label(), theme::MUTED));
+    spans.push(Span::styled(outcome.variant.as_str(), theme::MUTED));
     center_line(frame, inner, inner.y + 8, spans);
 }

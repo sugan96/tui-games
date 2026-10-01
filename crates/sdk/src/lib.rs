@@ -1,13 +1,25 @@
+//! Everything an arcade game needs except its rules. A game crate is a binary
+//! whose main is `arcade_sdk::run(&ENTRY)`. The SDK supplies the game menu with
+//! its top 10, name entry, game over, the score table and the terminal.
+//! See docs/adding-a-game.md.
+
 mod app;
 mod db;
 mod game;
-mod ui;
+pub mod info;
+mod input;
+pub mod testkit;
+pub mod ui;
 
-use app::{App, Screen};
+pub use db::ScoreRow;
+pub use game::{DrawCtx, Entry, Game, Outcome, Status};
+pub use input::Input;
+
+use app::App;
 use db::Db;
 use ratatui::crossterm::{
     event::{
-        self, Event, KeyEventKind, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+        self, Event, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
         PushKeyboardEnhancementFlags,
     },
     execute,
@@ -15,7 +27,13 @@ use ratatui::crossterm::{
 };
 use std::{io::stdout, time::Instant};
 
-fn main() -> anyhow::Result<()> {
+/// Runs one game until the player quits. With `--info` as the first argument,
+/// prints the game's info for the launcher and exits instead.
+pub fn run(entry: &'static Entry) -> anyhow::Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("--info") {
+        print!("{}", info::Info::of(entry).to_text());
+        return Ok(());
+    }
     let db = Db::open_default()?; // before the terminal is touched
     let mut terminal = ratatui::init();
     // Key release events (kitty keyboard protocol) where the terminal has them.
@@ -27,7 +45,10 @@ fn main() -> anyhow::Result<()> {
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::REPORT_EVENT_TYPES)
         )?;
     }
-    let result = run(&mut terminal, db, release_events);
+    let result = run_loop(
+        &mut terminal,
+        App::new(db, entry, Input::new(release_events)),
+    );
     if release_events {
         execute!(stdout(), PopKeyboardEnhancementFlags)?;
     }
@@ -35,32 +56,25 @@ fn main() -> anyhow::Result<()> {
     result
 }
 
-fn run(
+fn run_loop(
     terminal: &mut ratatui::DefaultTerminal,
-    db: Db,
-    release_events: bool,
+    app: anyhow::Result<App>,
 ) -> anyhow::Result<()> {
-    let mut app = App::new(db)?;
-    app.release_events = release_events;
-    // Deadline for the next step, so input events do not push the step back.
+    let mut app = app?;
+    // Deadline for the next tick, so input events do not push the tick back.
     let mut next = Instant::now() + app.tick_rate();
     while !app.quit {
-        app.refresh_boost(Instant::now());
         terminal.draw(|f| ui::draw(f, &app))?;
         let now = Instant::now();
         if now >= next {
-            app.on_timer()?;
+            app.on_timer(now)?;
             next = now + app.tick_rate();
         } else if event::poll(next - now)?
             && let Event::Key(k) = event::read()?
         {
-            app.track_hold(k.code, k.kind, Instant::now());
-            if k.kind != KeyEventKind::Press {
-                continue;
-            }
-            let was_playing = matches!(app.screen, Screen::Playing);
-            app.handle_key(k.code)?;
-            if !was_playing && matches!(app.screen, Screen::Playing) {
+            let was_playing = app.playing();
+            app.on_key(k.code, k.kind, Instant::now())?;
+            if !was_playing && app.playing() {
                 next = Instant::now() + app.tick_rate();
             }
         }
