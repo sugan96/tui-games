@@ -33,6 +33,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "arcade-sdk"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ratatui",
+ "rusqlite",
+]
+
+[[package]]
+name = "arcade-snake"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arcade-sdk",
+ "rand 0.10.3",
+ "ratatui",
+]
+
+[[package]]
 name = "atomic"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1333,16 +1352,6 @@ name = "smallvec"
 version = "1.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba467056f1b547ed52077911161fc86985becbc60e8e1857c8a144dab0def891"
-
-[[package]]
-name = "snake"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "rand 0.10.3",
- "ratatui",
- "rusqlite",
-]
 
 [[package]]
 name = "sqlite-wasm-rs"

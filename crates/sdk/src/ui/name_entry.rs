@@ -1,17 +1,13 @@
 use ratatui::{Frame, text::Span, widgets::Clear};
 
-use super::{center_line, centered, modal, play, theme};
-use crate::app::{App, NAME_LEN, Screen};
+use super::{center_line, centered, modal, theme};
+use crate::app::{App, NAME_LEN};
 
 const WIDTH: u16 = 46;
 const HEIGHT: u16 = 12;
 
-pub fn draw(frame: &mut Frame, app: &App) {
-    play::draw_board(frame, app, play::Look::Dim);
-    let Screen::NameEntry { name, .. } = &app.screen else {
-        return;
-    };
-    let score = app.game.score;
+/// Modal over the dimmed game. `app.top` gives the rank the score will take.
+pub fn draw(frame: &mut Frame, app: &App, score: u32, name: &str) {
     let area = centered(frame.area(), WIDTH, HEIGHT);
     let block = modal(
         "NEW HIGH SCORE",

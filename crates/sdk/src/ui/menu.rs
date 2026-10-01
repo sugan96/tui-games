@@ -2,29 +2,44 @@ use ratatui::{
     Frame,
     buffer::Buffer,
     style::{Color, Style},
+    text::Span,
 };
 
-use super::{centered, font, panel, theme};
+use super::{center_line, centered, font, panel, theme};
 use crate::{app::App, db::TOP_N};
 
-const WIDTH: u16 = 58;
-const HEIGHT: u16 = 28;
-const RAMP: [&str; 9] = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█", "█"];
+pub const WIDTH: u16 = 64;
+pub const HEIGHT: u16 = 28;
 
+/// The game menu: logo, top table, start prompt and about line.
 pub fn draw(frame: &mut Frame, app: &App) {
+    let entry = app.entry;
     let area = centered(frame.area(), WIDTH, HEIGHT);
-    frame.render_widget(
-        panel(
-            theme::CHROME,
-            &[("1-9", "fixed speed"), ("v", "variable"), ("q", "quit")],
-        ),
-        area,
-    );
-    let buf = frame.buffer_mut();
+    let mut hints = entry.starts.to_vec();
+    hints.push(("q", "quit"));
+    let block = panel(theme::CHROME, &hints);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
     let (x, y) = (area.x, area.y);
 
-    let logo = font::render("SNAKE");
-    let lx = x + (WIDTH - logo[0].chars().count() as u16) / 2;
+    if app.ticks % 4 != 3 {
+        center_line(
+            frame,
+            inner,
+            y + 22,
+            vec![Span::styled(prompt(entry.starts), theme::AMBER)],
+        );
+    }
+    center_line(
+        frame,
+        inner,
+        y + 24,
+        vec![Span::styled(entry.about, theme::MUTED)],
+    );
+
+    let buf = frame.buffer_mut();
+    let logo = font::render(&entry.title.to_ascii_uppercase());
+    let lx = x + WIDTH.saturating_sub(logo[0].chars().count() as u16) / 2;
     for (i, row) in logo.iter().enumerate() {
         blit(buf, lx + 1, y + 3 + i as u16, row, theme::SHADOW);
     }
@@ -38,7 +53,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         theme::MARQUEE,
     );
 
-    let tx = x + 8;
+    let tx = x + 11;
     buf.set_string(tx, y + 10, "RANK  NAME       SCORE   MODE", theme::MUTED);
     for i in 0..TOP_N {
         let row = y + 11 + i as u16;
@@ -71,29 +86,17 @@ pub fn draw(frame: &mut Frame, app: &App) {
         );
         buf.set_string(tx + 25, row, &r.variant, theme::MUTED);
     }
+}
 
-    if app.ticks % 4 != 3 {
-        let press = "PRESS 1-9 OR V TO START";
-        buf.set_string(
-            x + (WIDTH - press.len() as u16) / 2,
-            y + 22,
-            press,
-            theme::AMBER,
-        );
-    }
-
-    let sy = y + 24;
-    buf.set_string(tx, sy, "SPEED", theme::MUTED);
-    let mut cx = tx + 6;
-    for (i, bar) in RAMP.iter().enumerate() {
-        buf.set_string(cx, sy, format!(" {} ", i + 1), theme::CHIP);
-        buf.set_string(cx + 1, sy + 1, bar, Style::new().fg(theme::SPEED_RAMP[i]));
-        cx += 4;
-    }
-    buf.set_string(cx, sy, " v ", theme::CHIP);
-    buf.set_string(cx + 3, sy, "auto", theme::MUTED);
-    buf.set_string(tx + 6, sy + 2, "200ms", theme::CHROME_DIM);
-    buf.set_string(tx + 38, sy + 2, "40ms", theme::CHROME_DIM);
+/// "PRESS 1-9 OR V TO START" from the start keys.
+fn prompt(starts: &[(&str, &str)]) -> String {
+    let keys: Vec<String> = starts.iter().map(|(k, _)| k.to_uppercase()).collect();
+    let keys = match keys.split_last() {
+        Some((last, [])) => last.clone(),
+        Some((last, rest)) => format!("{} OR {last}", rest.join(", ")),
+        None => String::new(),
+    };
+    format!("PRESS {keys} TO START")
 }
 
 /// Write the filled cells of a block-font row, leaving its gaps untouched.
@@ -102,5 +105,20 @@ fn blit(buf: &mut Buffer, x: u16, y: u16, row: &str, color: Color) {
         if ch != ' ' {
             buf.set_string(x + i as u16, y, "█", Style::new().fg(color));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prompt_joins_keys() {
+        assert_eq!(prompt(&[("v", "")]), "PRESS V TO START");
+        assert_eq!(prompt(&[("1-9", ""), ("v", "")]), "PRESS 1-9 OR V TO START");
+        assert_eq!(
+            prompt(&[("a", ""), ("b", ""), ("c", "")]),
+            "PRESS A, B OR C TO START"
+        );
     }
 }

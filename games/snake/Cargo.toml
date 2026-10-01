@@ -1,0 +1,10 @@
+[package]
+name = "arcade-snake"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+arcade-sdk.workspace = true
+rand.workspace = true
+ratatui.workspace = true

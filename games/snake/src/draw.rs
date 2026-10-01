@@ -6,18 +6,21 @@ use ratatui::{
     text::Line,
 };
 
-use super::{centered, font, panel, theme};
-use crate::{
-    app::{App, Screen},
-    game::{H, W},
+use super::{
+    Snake,
+    board::{H, Mode, W},
+};
+use arcade_sdk::{
+    DrawCtx,
+    ui::{centered, font, panel, theme},
 };
 
 /// Each cell is two characters wide so it reads as square.
 const CELL_W: u16 = 2;
-const BOARD_W: u16 = W as u16 * CELL_W + 2;
-const BOARD_H: u16 = H as u16 + 2;
+pub const BOARD_W: u16 = W as u16 * CELL_W + 2;
+pub const BOARD_H: u16 = H as u16 + 2;
 const HUD_W: u16 = 24;
-const TOTAL_W: u16 = BOARD_W + 1 + HUD_W;
+pub const TOTAL_W: u16 = BOARD_W + 1 + HUD_W;
 
 const R: (i32, i32) = (1, 0);
 const L: (i32, i32) = (-1, 0);
@@ -25,25 +28,22 @@ const U: (i32, i32) = (0, 1);
 
 /// How the board is drawn: live play, the death blink, or dimmed under a modal.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Look {
+enum Look {
     Live,
     Dead { visible: bool },
     Dim,
 }
 
-pub fn draw(frame: &mut Frame, app: &App) {
-    let look = match app.screen {
-        Screen::Dying { left } => Look::Dead {
+/// Board and HUD, centered in the frame.
+pub fn draw(frame: &mut Frame, snake: &Snake, ctx: &DrawCtx) {
+    let look = match (ctx.dim, snake.dying) {
+        (true, _) => Look::Dim,
+        (false, Some(left)) => Look::Dead {
             visible: left % 2 == 1,
         },
-        _ => Look::Live,
+        (false, None) => Look::Live,
     };
-    draw_board(frame, app, look);
-}
-
-/// Board and HUD. Modals call this with `Look::Dim` and draw on top.
-pub fn draw_board(frame: &mut Frame, app: &App, look: Look) {
-    let dim = look == Look::Dim;
+    let dim = ctx.dim;
     let area = centered(frame.area(), TOTAL_W, BOARD_H);
     let board = Rect::new(area.x, area.y, BOARD_W, BOARD_H);
     let hud = Rect::new(area.x + BOARD_W + 1, area.y, HUD_W, BOARD_H);
@@ -70,12 +70,12 @@ pub fn draw_board(frame: &mut Frame, app: &App, look: Look) {
     frame.render_widget(hud_block, hud);
 
     let buf = frame.buffer_mut();
-    paint(buf, inner, app, look);
-    paint_hud(buf, hud_inner, app, dim);
+    paint(buf, inner, snake, look);
+    paint_hud(buf, hud_inner, snake, ctx);
 }
 
-fn paint(buf: &mut Buffer, inner: Rect, app: &App, look: Look) {
-    let game = &app.game;
+fn paint(buf: &mut Buffer, inner: Rect, snake: &Snake, look: Look) {
+    let game = &snake.board;
     let dim = look == Look::Dim;
     let pos = |cell: (i32, i32)| {
         (
@@ -103,7 +103,7 @@ fn paint(buf: &mut Buffer, inner: Rect, app: &App, look: Look) {
     }
 
     let food = match look {
-        Look::Live => theme::FOOD[(app.ticks % 2) as usize],
+        Look::Live => theme::FOOD[(snake.steps % 2) as usize],
         Look::Dead { .. } => theme::FOOD[0],
         Look::Dim => theme::DIM_C,
     };
@@ -131,7 +131,7 @@ fn paint(buf: &mut Buffer, inner: Rect, app: &App, look: Look) {
     } else {
         game.dir
     };
-    let halfway = look == Look::Live && !app.settled && n >= 2 && !game.over;
+    let halfway = look == Look::Live && !snake.settled && n >= 2 && !game.over;
     if !halfway {
         let (x, y) = pos(head);
         buf.set_string(x, y, head_glyph(moving), fg(color(0)));
@@ -174,8 +174,9 @@ fn head_glyph(moving: (i32, i32)) -> &'static str {
     }
 }
 
-fn paint_hud(buf: &mut Buffer, inner: Rect, app: &App, dim: bool) {
-    let game = &app.game;
+fn paint_hud(buf: &mut Buffer, inner: Rect, snake: &Snake, ctx: &DrawCtx) {
+    let game = &snake.board;
+    let dim = ctx.dim;
     let s = |st: Style| if dim { theme::DIM } else { st };
     let (x, y) = (inner.x + 1, inner.y);
     let right_x = |text: &str| inner.x + inner.width - 1 - text.chars().count() as u16;
@@ -192,7 +193,7 @@ fn paint_hud(buf: &mut Buffer, inner: Rect, app: &App, dim: bool) {
     }
 
     buf.set_string(x, y + 8, "HI-SCORE", s(theme::AMBER));
-    match app.top.first() {
+    match ctx.best {
         Some(r) => {
             let text = format!("{}  {}", r.score, r.name);
             buf.set_string(right_x(&text), y + 8, &text, s(theme::TEXT_BOLD));
@@ -225,21 +226,71 @@ fn paint_hud(buf: &mut Buffer, inner: Rect, app: &App, dim: bool) {
 
     buf.set_string(x, y + 15, "MODE", s(theme::MUTED));
     let mode = match game.mode {
-        crate::game::Mode::Fixed(_) => "fixed",
-        crate::game::Mode::Variable => "variable",
+        Mode::Fixed(_) => "fixed",
+        Mode::Variable => "variable",
     };
     buf.set_string(right_x(mode), y + 15, mode, s(theme::TEXT));
 
     buf.set_string(x, y + 16, "SPEED", s(theme::MUTED));
-    let speed = format!("{}ms", app.game_tick().as_millis());
+    let speed = format!("{}ms", snake.step_time().as_millis());
     buf.set_string(right_x(&speed), y + 16, &speed, s(theme::TEXT));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arcade_sdk::{ScoreRow, testkit::render as render_with};
 
     const D: (i32, i32) = (0, -1);
+    // Board is 107 wide by 22 tall centered in 120 by 32: inner origin (7, 6).
+    const IX: usize = 7;
+    const IY: usize = 6;
+
+    /// Head at (22, 11) moving right, body back and down to (17, 9), tail just
+    /// left (16, 9). Food at (30, 14).
+    fn playing() -> Snake {
+        let mut s = Snake::new(Mode::Fixed(3));
+        let b = &mut s.board;
+        b.apples = 4;
+        b.score = 12;
+        b.snake = [
+            (22, 11),
+            (21, 11),
+            (20, 11),
+            (19, 11),
+            (18, 11),
+            (18, 10),
+            (18, 9),
+            (17, 9),
+        ]
+        .into();
+        b.last_tail = Some((16, 9));
+        b.food = (30, 14);
+        s
+    }
+
+    fn render(s: &Snake) -> String {
+        let best = ScoreRow {
+            name: "ABC".into(),
+            score: 42,
+            variant: "fixed 5".into(),
+        };
+        let ctx = DrawCtx {
+            best: Some(&best),
+            dim: false,
+        };
+        render_with(120, 32, |f| draw(f, s, &ctx))
+    }
+
+    /// Character at board cell `(gx, gy)`, column `dx` of the two.
+    fn cell(s: &str, gx: usize, gy: usize, dx: usize) -> char {
+        s.lines()
+            .nth(IY + 19 - gy)
+            .unwrap()
+            .chars()
+            .nth(IX + gx * 2 + dx)
+            .unwrap()
+    }
 
     #[test]
     fn head_points_where_it_moves() {
@@ -247,5 +298,72 @@ mod tests {
         assert_eq!(head_glyph(L), "◀█");
         assert_eq!(head_glyph(U), "◢◣");
         assert_eq!(head_glyph(D), "◥◤");
+    }
+
+    #[test]
+    fn settled_draws_pointed_head_food_and_hud() {
+        let s = render(&playing());
+        assert_eq!(
+            (cell(&s, 22, 11, 0), cell(&s, 22, 11, 1)),
+            ('█', '▶'),
+            "{s}"
+        );
+        assert_eq!(cell(&s, 21, 11, 1), '█');
+        assert_eq!(cell(&s, 17, 9, 0), '█');
+        assert_eq!(
+            cell(&s, 16, 9, 1),
+            ' ',
+            "old tail cell is empty once settled"
+        );
+        assert_eq!((cell(&s, 30, 14, 0), cell(&s, 30, 14, 1)), ('▟', '▙'));
+        for want in [
+            "1UP",
+            "    ██ ██████",
+            "HI-SCORE     42  ABC",
+            "LEVEL          3 / 9",
+            "▮ ▮ ▮ ▮ ▮ ▮ ▮ ▮ ▮",
+            "APPLES          ▟▙ 4",
+            "MODE           fixed",
+            "SPEED          160ms",
+            "↑↓←→    q  quit",
+        ] {
+            assert!(s.contains(want), "missing {want:?} in\n{s}");
+        }
+    }
+
+    #[test]
+    fn halfway_shifts_head_and_tail_by_one_column() {
+        let mut g = playing();
+        g.settled = false;
+        let s = render(&g);
+        assert_eq!(cell(&s, 21, 11, 1), '█', "{s}");
+        assert_eq!(cell(&s, 22, 11, 0), '▶');
+        assert_eq!(cell(&s, 22, 11, 1), ' ');
+        assert_eq!(cell(&s, 16, 9, 0), ' ');
+        assert_eq!(cell(&s, 16, 9, 1), '█');
+    }
+
+    #[test]
+    fn halfway_vertical_uses_half_blocks() {
+        let mut g = playing();
+        g.settled = false;
+        g.board.snake = [(5, 6), (5, 5), (5, 4)].into();
+        g.board.last_tail = Some((5, 3));
+        let s = render(&g);
+        assert_eq!((cell(&s, 5, 6, 0), cell(&s, 5, 6, 1)), ('▄', '▄'), "{s}");
+        assert_eq!((cell(&s, 5, 3, 0), cell(&s, 5, 3, 1)), ('▀', '▀'));
+    }
+
+    #[test]
+    fn dying_blinks_the_snake() {
+        let mut g = playing();
+        g.dying = Some(5);
+        let s = render(&g);
+        assert_eq!(cell(&s, 22, 11, 1), '▶', "{s}");
+        g.dying = Some(4);
+        let s = render(&g);
+        assert_eq!(cell(&s, 22, 11, 1), ' ', "{s}");
+        assert_eq!(cell(&s, 18, 10, 0), ' ');
+        assert_eq!(cell(&s, 30, 14, 0), '▟', "food stays");
     }
 }
