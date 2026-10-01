@@ -1,11 +1,6 @@
-use ratatui::{
-    Frame,
-    buffer::Buffer,
-    style::{Color, Style},
-    text::Span,
-};
+use ratatui::{Frame, text::Span};
 
-use super::{center_line, centered, font, panel, theme};
+use super::{center_line, centered, logo, panel, theme};
 use crate::{app::App, db::TOP_N};
 
 pub const WIDTH: u16 = 64;
@@ -38,14 +33,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     );
 
     let buf = frame.buffer_mut();
-    let logo = font::render(&entry.title.to_ascii_uppercase());
-    let lx = x + WIDTH.saturating_sub(logo[0].chars().count() as u16) / 2;
-    for (i, row) in logo.iter().enumerate() {
-        blit(buf, lx + 1, y + 3 + i as u16, row, theme::SHADOW);
-    }
-    for (i, row) in logo.iter().enumerate() {
-        blit(buf, lx, y + 2 + i as u16, row, theme::LOGO[i]);
-    }
+    logo(buf, area, y + 2, entry.title);
     buf.set_string(
         x + 4,
         y + 8,
@@ -97,15 +85,6 @@ fn prompt(starts: &[(&str, &str)]) -> String {
         None => String::new(),
     };
     format!("PRESS {keys} TO START")
-}
-
-/// Write the filled cells of a block-font row, leaving its gaps untouched.
-fn blit(buf: &mut Buffer, x: u16, y: u16, row: &str, color: Color) {
-    for (i, ch) in row.chars().enumerate() {
-        if ch != ' ' {
-            buf.set_string(x + i as u16, y, "█", Style::new().fg(color));
-        }
-    }
 }
 
 #[cfg(test)]

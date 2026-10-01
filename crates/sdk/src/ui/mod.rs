@@ -6,6 +6,7 @@ pub mod theme;
 
 use ratatui::{
     Frame,
+    buffer::Buffer,
     layout::{Alignment, Rect},
     style::Style,
     text::{Line, Span},
@@ -18,20 +19,8 @@ use crate::{
 };
 
 pub(crate) fn draw(frame: &mut Frame, app: &App) {
-    let area = frame.area();
     let (min_w, min_h) = min_size(app);
-    if area.width < min_w || area.height < min_h {
-        let msg = format!(
-            "terminal too small\nneed {min_w}x{min_h}, have {}x{}",
-            area.width, area.height
-        );
-        let rect = centered(area, area.width.min(40), 2);
-        frame.render_widget(
-            Paragraph::new(msg)
-                .style(theme::DANGER)
-                .alignment(Alignment::Center),
-            rect,
-        );
+    if too_small(frame, min_w, min_h) {
         return;
     }
     let ctx = |dim| DrawCtx {
@@ -65,6 +54,46 @@ pub(crate) fn draw(frame: &mut Frame, app: &App) {
 fn min_size(app: &App) -> (u16, u16) {
     let (w, h) = app.entry.min_size;
     (w.max(menu::WIDTH), h.max(menu::HEIGHT))
+}
+
+/// If the frame is smaller than `width` by `height`, draws a message saying so
+/// and returns true. The caller then draws nothing else.
+pub fn too_small(frame: &mut Frame, width: u16, height: u16) -> bool {
+    let area = frame.area();
+    if area.width >= width && area.height >= height {
+        return false;
+    }
+    let msg = format!(
+        "terminal too small\nneed {width}x{height}, have {}x{}",
+        area.width, area.height
+    );
+    let rect = centered(area, area.width.min(40), 2);
+    frame.render_widget(
+        Paragraph::new(msg)
+            .style(theme::DANGER)
+            .alignment(Alignment::Center),
+        rect,
+    );
+    true
+}
+
+/// Block letter logo with a drop shadow, centered across `area`, top row at `y`.
+pub fn logo(buf: &mut Buffer, area: Rect, y: u16, text: &str) {
+    let rows = font::render(&text.to_ascii_uppercase());
+    let x = area.x + area.width.saturating_sub(rows[0].chars().count() as u16) / 2;
+    let blit = |buf: &mut Buffer, x: u16, y: u16, row: &str, color| {
+        for (i, ch) in row.chars().enumerate() {
+            if ch != ' ' {
+                buf.set_string(x + i as u16, y, "█", Style::new().fg(color));
+            }
+        }
+    };
+    for (i, row) in rows.iter().enumerate() {
+        blit(buf, x + 1, y + 1 + i as u16, row, theme::SHADOW);
+    }
+    for (i, row) in rows.iter().enumerate() {
+        blit(buf, x, y + i as u16, row, theme::LOGO[i]);
+    }
 }
 
 /// A `width` by `height` rectangle centered in `area`, clipped to it.
