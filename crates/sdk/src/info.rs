@@ -3,7 +3,10 @@
 
 use anyhow::{Context, Result, bail};
 
-use crate::Entry;
+use crate::{
+    Entry,
+    ui::thumb::{THUMB_H, THUMB_W},
+};
 
 /// Bump when the launcher can no longer run games built against the old SDK.
 pub const PROTOCOL: u32 = 1;
@@ -13,6 +16,8 @@ pub struct Info {
     pub id: String,
     pub title: String,
     pub about: String,
+    /// Thumbnail rows, at most THUMB_H of at most THUMB_W letters. Empty when the game has none.
+    pub thumb: Vec<String>,
 }
 
 impl Info {
@@ -21,14 +26,20 @@ impl Info {
             id: e.id.into(),
             title: e.title.into(),
             about: e.about.into(),
+            thumb: e.thumb.iter().map(|r| r.to_string()).collect(),
         }
     }
 
+    /// One `thumb=` line per thumbnail row, in order.
     pub fn to_text(&self) -> String {
-        format!(
+        let mut text = format!(
             "protocol={PROTOCOL}\nid={}\ntitle={}\nabout={}\n",
             self.id, self.title, self.about
-        )
+        );
+        for row in &self.thumb {
+            text.push_str(&format!("thumb={row}\n"));
+        }
+        text
     }
 
     /// Inverse of to_text. Fails on another protocol version, a missing key, or an
@@ -53,6 +64,12 @@ impl Info {
             id: id.into(),
             title: get("title")?.into(),
             about: get("about")?.into(),
+            thumb: text
+                .lines()
+                .filter_map(|l| l.strip_prefix("thumb="))
+                .take(THUMB_H)
+                .map(|r| r.chars().take(THUMB_W).collect())
+                .collect(),
         })
     }
 }
@@ -71,6 +88,7 @@ mod tests {
             id: "snake".into(),
             title: "snake".into(),
             about: "an apple = level points".into(),
+            thumb: vec!["r.g".into(), "..y".into()],
         }
     }
 
@@ -79,6 +97,21 @@ mod tests {
         let text = info().to_text();
         assert_eq!(Info::parse(&text).unwrap(), info());
         assert_eq!(Info::parse(&format!("extra=1\n{text}")).unwrap(), info());
+    }
+
+    #[test]
+    fn thumb_is_optional_and_clipped_to_size() {
+        let text = info().to_text();
+        let bare: String = text
+            .lines()
+            .filter(|l| !l.starts_with("thumb="))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        assert!(Info::parse(&bare).unwrap().thumb.is_empty());
+        let big = format!("{bare}{}", format!("thumb={}\n", "g".repeat(99)).repeat(99));
+        let thumb = Info::parse(&big).unwrap().thumb;
+        assert_eq!(thumb.len(), THUMB_H);
+        assert!(thumb.iter().all(|r| r.chars().count() == THUMB_W));
     }
 
     #[test]

@@ -1,8 +1,8 @@
-//! The contract between the shell and a game. A game is one module under
-//! src/games that exports an `Entry`, listed in `games::REGISTRY`.
-//! The shell owns the launcher, the game menu with its top 10, name entry,
-//! game over, the score table and the terminal. The game owns its rules,
-//! its keys, its tick speed, its animations and its drawing.
+//! The contract between the SDK shell and a game. A game is a binary crate
+//! under games/ whose main is `arcade_sdk::run(&ENTRY)`.
+//! The shell owns the game menu with its top 10, name entry, game over, the
+//! score table and the terminal. The game owns its rules, its keys, its tick
+//! speed, its animations and its drawing.
 
 use std::time::Duration;
 
@@ -25,6 +25,9 @@ pub struct Entry {
     pub start: fn(char) -> Option<Box<dyn Game>>,
     /// Smallest terminal, in columns and rows, that `Game::draw` fits in.
     pub min_size: (u16, u16),
+    /// Pixel art for the launcher card: `ui::thumb::THUMB_H` rows of
+    /// `ui::thumb::THUMB_W` palette letters, `.` for transparent. See `ui::thumb::color`.
+    pub thumb: &'static [&'static str],
 }
 
 pub enum Status {

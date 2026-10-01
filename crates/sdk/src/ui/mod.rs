@@ -3,6 +3,7 @@ mod game_over;
 mod menu;
 mod name_entry;
 pub mod theme;
+pub mod thumb;
 
 use ratatui::{
     Frame,

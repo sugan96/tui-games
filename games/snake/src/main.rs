@@ -15,6 +15,21 @@ const ENTRY: Entry = Entry {
     starts: &[("1-9", "fixed speed"), ("v", "variable")],
     start,
     min_size: (draw::TOTAL_W, draw::BOARD_H),
+    // Lime near the head fading to dark green at the tail, an apple ahead.
+    thumb: &[
+        "........................",
+        "....................G...",
+        "..llllllllllllyk...wrr..",
+        "..llllllllllllyy...rrr..",
+        "..ll...............rrr..",
+        "..ll....................",
+        "..gggggggggggggggggg....",
+        "..gggggggggggggggggg....",
+        "..................gg....",
+        "..................gg....",
+        "......GGGGGGGGGGGGGG....",
+        "......GGGGGGGGGGGGGG....",
+    ],
 };
 
 fn main() -> anyhow::Result<()> {

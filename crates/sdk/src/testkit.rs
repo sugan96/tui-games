@@ -34,6 +34,26 @@ pub fn check(e: &Entry) {
     );
     assert!(!e.about.contains('\n'), "{} about must be one line", e.id);
     assert!(!e.starts.is_empty(), "{} has no start hints", e.id);
+    {
+        use crate::ui::thumb::{THUMB_H, THUMB_W, is_palette};
+        assert_eq!(
+            e.thumb.len(),
+            THUMB_H,
+            "{} thumb needs {THUMB_H} rows",
+            e.id
+        );
+        for (i, row) in e.thumb.iter().enumerate() {
+            assert_eq!(
+                row.chars().count(),
+                THUMB_W,
+                "{} thumb row {i} needs {THUMB_W} letters",
+                e.id
+            );
+            if let Some(c) = row.chars().find(|&c| !is_palette(c)) {
+                panic!("{} thumb row {i} has {c:?}, not a palette letter", e.id);
+            }
+        }
+    }
     let keys: Vec<char> = (' '..='~')
         .filter(|&c| c != 'q' && (e.start)(c).is_some())
         .collect();
