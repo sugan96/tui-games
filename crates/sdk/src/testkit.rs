@@ -23,7 +23,7 @@ pub fn render(cols: u16, rows: u16, draw: impl FnOnce(&mut Frame)) -> String {
 /// its minimum size, live and dimmed, along the way.
 pub fn check(e: &Entry) {
     assert!(
-        !e.id.is_empty() && e.id.chars().all(|c| c.is_ascii_lowercase() || c == '-'),
+        crate::info::valid_id(e.id),
         "id {:?} must be lower case letters and dashes",
         e.id
     );
@@ -32,6 +32,7 @@ pub fn check(e: &Entry) {
         "{} title must be letters and spaces",
         e.id
     );
+    assert!(!e.about.contains('\n'), "{} about must be one line", e.id);
     assert!(!e.starts.is_empty(), "{} has no start hints", e.id);
     let keys: Vec<char> = (' '..='~')
         .filter(|&c| c != 'q' && (e.start)(c).is_some())

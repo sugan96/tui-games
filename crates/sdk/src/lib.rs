@@ -6,6 +6,7 @@
 mod app;
 mod db;
 mod game;
+pub mod info;
 mod input;
 pub mod testkit;
 pub mod ui;
@@ -26,8 +27,13 @@ use ratatui::crossterm::{
 };
 use std::{io::stdout, time::Instant};
 
-/// Runs one game until the player quits.
+/// Runs one game until the player quits. With `--info` as the first argument,
+/// prints the game's info for the launcher and exits instead.
 pub fn run(entry: &'static Entry) -> anyhow::Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("--info") {
+        print!("{}", info::Info::of(entry).to_text());
+        return Ok(());
+    }
     let db = Db::open_default()?; // before the terminal is touched
     let mut terminal = ratatui::init();
     // Key release events (kitty keyboard protocol) where the terminal has them.
