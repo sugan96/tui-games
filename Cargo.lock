@@ -33,6 +33,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "arcade"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arcade-sdk",
+ "ratatui",
+]
+
+[[package]]
 name = "arcade-sdk"
 version = "0.1.0"
 dependencies = [
