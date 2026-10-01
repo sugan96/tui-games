@@ -53,15 +53,26 @@ fn is_valid(conn: &Connection) -> rusqlite::Result<bool> {
     }
 }
 
+/// Copies `old` to `path` when `path` does not exist and `old` does. Leaves `old` in place.
+fn adopt(path: &Path, old: &Path) -> Result<()> {
+    if !path.exists() && old.exists() {
+        std::fs::copy(old, path)
+            .with_context(|| format!("cannot copy {} to {}", old.display(), path.display()))?;
+    }
+    Ok(())
+}
+
 impl Db {
-    /// Opens ~/.config/snake/snake.db, creating the directory.
+    /// Opens ~/.config/arcade/scores.db, creating the directory. Every game shares it.
+    /// On first use, copies the scores of the snake-only release from ~/.config/snake/snake.db.
     pub fn open_default() -> Result<Db> {
-        let dir = std::env::home_dir()
-            .context("home directory is unknown")?
-            .join(".config/snake");
+        let home = std::env::home_dir().context("home directory is unknown")?;
+        let dir = home.join(".config/arcade");
         std::fs::create_dir_all(&dir)
             .with_context(|| format!("cannot create {}", dir.display()))?;
-        Db::open(&dir.join("snake.db"))
+        let path = dir.join("scores.db");
+        adopt(&path, &home.join(".config/snake/snake.db"))?;
+        Db::open(&path)
     }
 
     /// Opens the file at path. A file that is not a valid SQLite database is renamed
@@ -268,14 +279,39 @@ mod tests {
         db.set_name(id, "AGN").unwrap();
     }
 
-    #[test]
-    fn corrupt_file_is_moved_aside() {
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let dir = std::env::temp_dir().join(format!("snake-test-{}-{nanos}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("arcade-{tag}-{}-{nanos}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn adopt_copies_the_old_file_once() {
+        let dir = temp_dir("adopt");
+        let (new, old) = (dir.join("scores.db"), dir.join("snake.db"));
+        adopt(&new, &old).unwrap();
+        assert!(!new.exists(), "nothing to copy");
+        std::fs::write(&old, "old").unwrap();
+        adopt(&new, &old).unwrap();
+        assert_eq!(std::fs::read_to_string(&new).unwrap(), "old");
+        assert!(old.exists(), "the old file stays");
+        std::fs::write(&old, "newer").unwrap();
+        adopt(&new, &old).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&new).unwrap(),
+            "old",
+            "never overwrites"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn corrupt_file_is_moved_aside() {
+        let dir = temp_dir("corrupt");
         let path = dir.join("snake.db");
         std::fs::write(&path, vec![0xAB; 4096]).unwrap();
 
