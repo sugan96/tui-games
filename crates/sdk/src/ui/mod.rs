@@ -301,6 +301,21 @@ mod tests {
     }
 
     #[test]
+    fn game_over_modal_draws_a_seven_digit_score_in_narrow_digits() {
+        // Seven wide digits need 48 columns and the modal's inner width is 44.
+        let mut a = app();
+        a.screen = Screen::GameOver {
+            game: start('3'),
+            outcome: Outcome {
+                score: 1_000_000,
+                ..outcome()
+            },
+            ranked: false,
+        };
+        has(&render(&a), &["  █ ███ ███ ███ ███ ███ ███"]);
+    }
+
+    #[test]
     fn menu_stage_picker_dims_arrows_at_the_limits() {
         use ratatui::{Terminal, backend::TestBackend, style::Color};
         // Text and the fg of the two arrow cells.
