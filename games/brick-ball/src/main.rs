@@ -1,4 +1,6 @@
 #[allow(dead_code)] // used by the game from Task 4 on, which removes this allow
+mod board;
+#[allow(dead_code)] // used by the game from Task 4 on, which removes this allow
 mod stage;
 
 use std::time::Duration;
