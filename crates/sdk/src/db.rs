@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use rusqlite::{Connection, ErrorCode, params};
+use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
 
 pub const TOP_N: usize = 10;
 
@@ -16,6 +16,13 @@ const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS scores (
   name TEXT,
   score INTEGER NOT NULL,
   played_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);";
+
+/// Highest stage reached per game with stages. Created on every open, so a
+/// database already at version 1 gains it without a migration.
+const PROGRESS: &str = "CREATE TABLE IF NOT EXISTS progress (
+  game TEXT PRIMARY KEY,
+  reached INTEGER NOT NULL
 );";
 
 /// Copies rows from the snake-only table, where mode 0 was variable and 1 to 9 fixed.
@@ -112,6 +119,7 @@ impl Db {
             }
             tx.execute_batch("PRAGMA user_version = 1")?;
         }
+        tx.execute_batch(PROGRESS)?;
         tx.commit()?;
         Ok(Db { conn })
     }
@@ -155,6 +163,43 @@ impl Db {
     pub fn qualifies(&self, game: &str, score: u32) -> Result<bool> {
         let top = self.top(game, TOP_N)?;
         Ok(score > 0 && (top.len() < TOP_N || score > top[TOP_N - 1].score))
+    }
+
+    /// Highest stage reached in `game`, 1 when no row exists.
+    pub fn reached(&self, game: &str) -> Result<u32> {
+        let saved: Option<u32> = self
+            .conn
+            .query_row(
+                "SELECT reached FROM progress WHERE game = ?1",
+                params![game],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(saved.unwrap_or(1).max(1))
+    }
+
+    /// Raises the saved stage of `game` to `reached` when `reached` is greater
+    /// than the saved value, where no row counts as 0. Never lowers it.
+    pub fn raise(&self, game: &str, reached: u32) -> Result<()> {
+        if reached == 0 {
+            return Ok(());
+        }
+        self.conn.execute(
+            "INSERT INTO progress (game, reached) VALUES (?1, ?2)
+             ON CONFLICT (game) DO UPDATE SET reached = excluded.reached
+             WHERE excluded.reached > progress.reached",
+            params![game, reached],
+        )?;
+        Ok(())
+    }
+
+    /// Rows in the progress table. For tests in other modules, which cannot
+    /// read the private `conn`.
+    #[cfg(test)]
+    pub fn progress_rows(&self) -> u32 {
+        self.conn
+            .query_row("SELECT COUNT(*) FROM progress", [], |r| r.get(0))
+            .unwrap()
     }
 }
 
@@ -277,6 +322,51 @@ mod tests {
         let id = db.record(G, "fixed 1", 1).unwrap();
         let db = Db::init(db.conn).unwrap();
         db.set_name(id, "AGN").unwrap();
+    }
+
+    #[test]
+    fn progress_defaults_to_one_and_round_trips() {
+        let db = Db::open_in_memory().unwrap();
+        assert_eq!(db.reached("g").unwrap(), 1);
+        assert_eq!(db.progress_rows(), 0);
+        db.raise("g", 4).unwrap();
+        assert_eq!(db.reached("g").unwrap(), 4);
+    }
+
+    #[test]
+    fn first_raise_writes_a_row_even_at_stage_one() {
+        let db = Db::open_in_memory().unwrap();
+        db.raise("g", 0).unwrap();
+        assert_eq!(db.progress_rows(), 0);
+        db.raise("g", 1).unwrap();
+        assert_eq!(db.progress_rows(), 1);
+        assert_eq!(db.reached("g").unwrap(), 1);
+    }
+
+    #[test]
+    fn progress_only_rises() {
+        let db = Db::open_in_memory().unwrap();
+        db.raise("g", 4).unwrap();
+        db.raise("g", 2).unwrap();
+        assert_eq!(db.reached("g").unwrap(), 4);
+        db.raise("g", 7).unwrap();
+        assert_eq!(db.reached("g").unwrap(), 7);
+        assert_eq!(db.reached("other").unwrap(), 1);
+    }
+
+    #[test]
+    fn existing_database_gains_progress_table() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        conn.execute_batch("PRAGMA user_version = 1").unwrap();
+        let db = Db::init(conn).unwrap();
+        db.raise("g", 3).unwrap();
+        assert_eq!(db.reached("g").unwrap(), 3);
+        let version: i64 = db
+            .conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 1);
     }
 
     fn temp_dir(tag: &str) -> std::path::PathBuf {

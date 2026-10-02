@@ -30,6 +30,11 @@ pub const ACCENT_HI: Style = bold(209);
 pub const MARQUEE: Style = fg(173);
 pub const MODAL_BORDER: Style = fg(173);
 pub const AMBER: Style = bold(214);
+/// The `STAGE n` chip of the menu stage picker.
+pub const PICKER: Style = Style::new()
+    .fg(c(233))
+    .bg(c(214))
+    .add_modifier(Modifier::BOLD);
 pub const GOLD: Style = bold(220);
 pub const PODIUM: [Style; 3] = [bold(220), bold(250), bold(172)];
 pub const DANGER: Style = bold(196);

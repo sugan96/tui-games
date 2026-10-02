@@ -36,6 +36,10 @@ pub struct App {
     /// Timer ticks outside play. Drives blinking prompts.
     pub ticks: u64,
     pub input: Input,
+    /// Stage chosen on the menu picker, 1 to max_stage.
+    pub stage: u32,
+    /// Highest stage reached in this game, at least 1. Always 1 for a game without stages.
+    pub max_stage: u32,
     db: Db,
 }
 
@@ -45,6 +49,11 @@ pub const IDLE_TICK: Duration = Duration::from_millis(250);
 impl App {
     /// Starts on the game menu.
     pub fn new(db: Db, entry: &'static Entry, input: Input) -> anyhow::Result<App> {
+        let max_stage = if entry.stages {
+            db.reached(entry.id)?
+        } else {
+            1
+        };
         Ok(App {
             screen: Screen::Menu,
             entry,
@@ -52,6 +61,8 @@ impl App {
             quit: false,
             ticks: 0,
             input,
+            stage: 1,
+            max_stage,
             db,
         })
     }
@@ -72,17 +83,36 @@ impl App {
     }
 
     /// A key press. q quits on every screen except name entry, where it is a letter.
+    /// q during a run of a game with stages saves its progress first.
     pub fn handle_key(&mut self, key: KeyCode) -> anyhow::Result<()> {
         if key == KeyCode::Char('q') && !matches!(self.screen, Screen::NameEntry { .. }) {
+            if let Screen::Playing(game) = &self.screen
+                && self.entry.stages
+            {
+                let reached = game.reached();
+                self.save_progress(reached)?;
+            }
             self.quit = true;
             return Ok(());
         }
         let entry = self.entry;
         match &mut self.screen {
             Screen::Menu => {
-                if let KeyCode::Char(c) = key
-                    && let Some(game) = (entry.start)(c)
-                {
+                let stage = if entry.stages { self.stage } else { 1 };
+                let game = match key {
+                    KeyCode::Left if entry.stages => {
+                        self.stage = self.stage.saturating_sub(1).max(1);
+                        None
+                    }
+                    KeyCode::Right if entry.stages => {
+                        self.stage = (self.stage + 1).min(self.max_stage);
+                        None
+                    }
+                    KeyCode::Char(c) => (entry.start)(c, stage),
+                    KeyCode::Enter => (entry.start)('\n', stage),
+                    _ => None,
+                };
+                if let Some(game) = game {
                     self.input.clear();
                     self.screen = Screen::Playing(game);
                 }
@@ -137,6 +167,9 @@ impl App {
         };
         let id = self.entry.id;
         let row = self.db.record(id, &outcome.variant, outcome.score)?;
+        if self.entry.stages {
+            self.save_progress(game.reached())?;
+        }
         self.screen = if self.db.qualifies(id, outcome.score)? {
             Screen::NameEntry {
                 game,
@@ -151,6 +184,13 @@ impl App {
                 ranked: false,
             }
         };
+        Ok(())
+    }
+
+    /// Raises the saved progress and the picker's limit to `reached`. Only for a game with stages.
+    fn save_progress(&mut self, reached: u32) -> anyhow::Result<()> {
+        self.db.raise(self.entry.id, reached)?;
+        self.max_stage = self.max_stage.max(reached);
         Ok(())
     }
 
@@ -184,6 +224,7 @@ pub mod tests {
     pub struct Fake {
         left: u32,
         score: u32,
+        reached: u32,
     }
 
     impl Game for Fake {
@@ -211,11 +252,32 @@ pub mod tests {
                 .buffer_mut()
                 .set_string(0, 0, text, ratatui::style::Style::new());
         }
+        fn reached(&self) -> u32 {
+            self.reached
+        }
     }
 
-    fn fake_start(c: char) -> Option<Box<dyn Game>> {
+    /// Reports a reached stage past its start, so a test fails if the SDK
+    /// saves progress for this game without stages.
+    fn fake_start(c: char, stage: u32) -> Option<Box<dyn Game>> {
         let score = c.to_digit(10)?;
-        Some(Box::new(Fake { left: 2, score }))
+        Some(Box::new(Fake {
+            left: 2,
+            score,
+            reached: stage + 1,
+        }))
+    }
+
+    /// Starts only on Enter. Score 0 so the run ends on game over, and it has
+    /// got two stages past its start from the first tick.
+    fn staged_start(c: char, stage: u32) -> Option<Box<dyn Game>> {
+        (c == '\n').then(|| {
+            Box::new(Fake {
+                left: 2,
+                score: 0,
+                reached: stage + 2,
+            }) as Box<dyn Game>
+        })
     }
 
     pub static FAKE: Entry = Entry {
@@ -223,6 +285,7 @@ pub mod tests {
         title: "fake",
         about: "fake about line",
         starts: &[("0-9", "score")],
+        stages: false,
         start: fake_start,
         min_size: (20, 10),
         thumb: &[
@@ -241,17 +304,40 @@ pub mod tests {
         ],
     };
 
+    pub static STAGED: Entry = Entry {
+        id: "staged",
+        title: "staged",
+        about: "staged about line",
+        starts: &[("enter", "start")],
+        stages: true,
+        start: staged_start,
+        min_size: FAKE.min_size,
+        thumb: FAKE.thumb,
+    };
+
     pub fn app() -> App {
         App::new(Db::open_in_memory().unwrap(), &FAKE, Input::new(true)).unwrap()
     }
 
+    /// The staged game with progress saved up to stage `max`.
+    pub fn staged_app(max: u32) -> App {
+        let db = Db::open_in_memory().unwrap();
+        db.raise("staged", max).unwrap();
+        App::new(db, &STAGED, Input::new(true)).unwrap()
+    }
+
     pub fn start(c: char) -> Box<dyn Game> {
-        fake_start(c).unwrap()
+        fake_start(c, 1).unwrap()
     }
 
     #[test]
     fn fake_meets_the_contract() {
         crate::testkit::check(&FAKE);
+    }
+
+    #[test]
+    fn staged_fake_meets_the_contract() {
+        crate::testkit::check(&STAGED);
     }
 
     fn press(app: &mut App, keys: &str) {
@@ -364,5 +450,71 @@ pub mod tests {
         let mut a = app();
         a.on_timer(Instant::now()).unwrap();
         assert_eq!(a.ticks, 1);
+    }
+
+    fn keys(app: &mut App, keys: &[KeyCode]) {
+        for &k in keys {
+            app.handle_key(k).unwrap();
+        }
+    }
+
+    #[test]
+    fn stage_picker_moves_within_one_to_max() {
+        let mut a = staged_app(3);
+        keys(&mut a, &[KeyCode::Left]);
+        assert_eq!(a.stage, 1);
+        keys(&mut a, &[KeyCode::Right; 3]);
+        assert_eq!(a.stage, 3);
+        keys(&mut a, &[KeyCode::Left]);
+        assert_eq!(a.stage, 2);
+    }
+
+    #[test]
+    fn enter_starts_the_chosen_stage_and_raises_progress() {
+        let mut a = staged_app(3);
+        keys(&mut a, &[KeyCode::Right, KeyCode::Enter]);
+        assert!(a.playing());
+        finish(&mut a);
+        assert_eq!(a.db.reached("staged").unwrap(), 4);
+        assert_eq!(a.max_stage, 4);
+    }
+
+    #[test]
+    fn picker_keeps_its_value_between_runs() {
+        let mut a = staged_app(3);
+        keys(&mut a, &[KeyCode::Right, KeyCode::Enter]);
+        finish(&mut a);
+        assert!(matches!(a.screen, Screen::GameOver { .. }));
+        press(&mut a, "r");
+        assert!(matches!(a.screen, Screen::Menu));
+        assert_eq!(a.stage, 2);
+        assert_eq!(a.max_stage, 4);
+    }
+
+    #[test]
+    fn quitting_mid_run_saves_progress() {
+        let mut a = staged_app(3);
+        keys(&mut a, &[KeyCode::Right, KeyCode::Right, KeyCode::Enter]);
+        press(&mut a, "q");
+        assert!(a.quit);
+        assert_eq!(a.db.reached("staged").unwrap(), 5);
+        assert_eq!(a.max_stage, 5);
+
+        let mut a = app();
+        press(&mut a, "5q");
+        assert!(a.quit);
+        assert_eq!(a.db.progress_rows(), 0);
+    }
+
+    #[test]
+    fn game_without_stages_ignores_arrows_and_saves_no_progress() {
+        let mut a = app();
+        keys(&mut a, &[KeyCode::Right]);
+        assert_eq!(a.stage, 1);
+        assert_eq!(a.max_stage, 1);
+        press(&mut a, "5");
+        finish(&mut a);
+        assert_eq!(a.db.reached("fake").unwrap(), 1);
+        assert_eq!(a.db.progress_rows(), 0);
     }
 }

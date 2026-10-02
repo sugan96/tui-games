@@ -20,9 +20,12 @@ pub struct Entry {
     pub about: &'static str,
     /// Start keys and what they start, as key chips on the game menu.
     pub starts: &'static [(&'static str, &'static str)],
-    /// Starts a game for a key pressed on the game menu. None for keys the game
-    /// does not use. q is never passed: it quits the program everywhere.
-    pub start: fn(char) -> Option<Box<dyn Game>>,
+    /// True: the game menu shows a stage picker and `start` gets the chosen
+    /// stage. False: no picker, `start` gets 1 and `Game::reached` is never read.
+    pub stages: bool,
+    /// Starts a game for a key pressed on the game menu and a stage. Enter
+    /// arrives as '\n'. None for keys the game does not use. q is never passed.
+    pub start: fn(char, u32) -> Option<Box<dyn Game>>,
     /// Smallest terminal, in columns and rows, that `Game::draw` fits in.
     pub min_size: (u16, u16),
     /// Pixel art for the launcher card: `ui::thumb::THUMB_H` rows of
@@ -61,4 +64,10 @@ pub trait Game {
     fn tick_rate(&self) -> Duration;
     /// Draw into the whole frame, which is at least `Entry::min_size`.
     fn draw(&self, frame: &mut Frame, ctx: &DrawCtx);
+    /// Highest stage this run has got to. The SDK raises the saved progress to
+    /// it when the run ends and when the player quits with q during the run.
+    /// The default 0 is for games without stages, which leave it out.
+    fn reached(&self) -> u32 {
+        0
+    }
 }

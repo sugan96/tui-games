@@ -155,7 +155,7 @@ pub fn center_line(frame: &mut Frame, area: Rect, y: u16, spans: Vec<Span>) {
 mod tests {
     use super::*;
     use crate::{
-        app::tests::{app, start},
+        app::tests::{app, staged_app, start},
         db::ScoreRow,
         game::Outcome,
         testkit,
@@ -298,5 +298,35 @@ mod tests {
         let s = render(&a);
         has(&s, &["▟▙ 4 apples   ·   fixed 3"]);
         assert!(!s.contains("new best"));
+    }
+
+    #[test]
+    fn menu_stage_picker_dims_arrows_at_the_limits() {
+        use ratatui::{Terminal, backend::TestBackend, style::Color};
+        // Text and the fg of the two arrow cells.
+        fn picker(app: &App) -> (String, Color, Color) {
+            let mut t = Terminal::new(TestBackend::new(80, 30)).unwrap();
+            t.draw(|f| draw(f, app)).unwrap();
+            let buf = t.backend().buffer();
+            let cell = |sym| buf.content().iter().find(|c| c.symbol() == sym).unwrap().fg;
+            let text = buf.content().iter().map(|c| c.symbol()).collect();
+            (text, cell("◀"), cell("▶"))
+        }
+        let (dim, live) = (Color::Indexed(237), Color::Indexed(214));
+        let mut a = staged_app(3);
+        let (s, left, right) = picker(&a);
+        has(&s, &["◀ STAGE 1 ▶ of 3", "←→  stage"]);
+        assert_eq!((left, right), (dim, live));
+        a.stage = 3;
+        let (s, left, right) = picker(&a);
+        has(&s, &["◀ STAGE 3 ▶ of 3"]);
+        assert_eq!((left, right), (live, dim));
+        let (_, left, right) = picker(&staged_app(1));
+        assert_eq!((left, right), (dim, dim));
+    }
+
+    #[test]
+    fn menu_without_stages_has_no_picker() {
+        assert!(!render(&app()).contains("STAGE"));
     }
 }

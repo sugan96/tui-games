@@ -13,6 +13,7 @@ const ENTRY: Entry = Entry {
     title: "snake",
     about: "an apple is worth the current level in points",
     starts: &[("1-9", "fixed speed"), ("v", "variable")],
+    stages: false,
     start,
     min_size: (draw::TOTAL_W, draw::BOARD_H),
     // Lime near the head fading to dark green at the tail, an apple ahead.
@@ -40,7 +41,7 @@ fn main() -> anyhow::Result<()> {
 const BLINKS: u8 = 6;
 const BLINK_TICK: Duration = Duration::from_millis(200);
 
-fn start(c: char) -> Option<Box<dyn Game>> {
+fn start(c: char, _stage: u32) -> Option<Box<dyn Game>> {
     let mode = match c {
         '1'..='9' => Mode::Fixed(c as u8 - b'0'),
         'v' => Mode::Variable,
@@ -183,10 +184,10 @@ mod tests {
 
     #[test]
     fn start_keys_pick_the_mode() {
-        assert!(start('5').is_some());
-        assert!(start('v').is_some());
-        assert!(start('0').is_none());
-        assert!(start('x').is_none());
+        assert!(start('5', 1).is_some());
+        assert!(start('v', 1).is_some());
+        assert!(start('0', 1).is_none());
+        assert!(start('x', 1).is_none());
     }
 
     #[test]
