@@ -42,6 +42,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "arcade-brick-ball"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arcade-sdk",
+ "rand 0.10.3",
+ "ratatui",
+]
+
+[[package]]
 name = "arcade-sdk"
 version = "0.1.0"
 dependencies = [
