@@ -14,6 +14,7 @@ const ENTRY: Entry = Entry {
     about: "an apple is worth the current level in points",
     starts: &[("1-9", "fixed speed"), ("v", "variable")],
     stages: false,
+    hold_on_press: false,
     start,
     min_size: (draw::TOTAL_W, draw::BOARD_H),
     // Lime near the head fading to dark green at the tail, an apple ahead.
@@ -167,7 +168,7 @@ mod tests {
     }
 
     fn input() -> Input {
-        Input::new(true)
+        Input::new(true, false)
     }
 
     fn outcome(s: &mut Snake) -> Option<Outcome> {

@@ -23,6 +23,9 @@ pub struct Entry {
     /// True: the game menu shows a stage picker and `start` gets the chosen
     /// stage. False: no picker, `start` gets 1 and `Game::reached` is never read.
     pub stages: bool,
+    /// Without release events a press starts a hold for 400 ms. For continuous
+    /// controls such as a paddle. Leave false for tap controls.
+    pub hold_on_press: bool,
     /// Starts a game for a key pressed on the game menu and a stage. Enter
     /// arrives as '\n'. None for keys the game does not use. q is never passed.
     pub start: fn(char, u32) -> Option<Box<dyn Game>>,

@@ -15,6 +15,7 @@ const ENTRY: Entry = Entry {
     about: "break every brick · reach a stage to start there",
     starts: &[("enter", "start")],
     stages: true,
+    hold_on_press: true,
     start,
     // The play screen fits 80 by 24. The SDK takes the larger of this and its
     // 64 by 28 game menu on each axis, so the program needs 80 by 28.
@@ -70,14 +71,8 @@ impl Game for BrickBall {
             self.paused = !self.paused;
             return;
         }
-        if self.paused {
-            return;
-        }
-        match key {
-            KeyCode::Char(' ') => self.board.launch(),
-            KeyCode::Left | KeyCode::Char('a') => self.board.press(-1),
-            KeyCode::Right | KeyCode::Char('d') => self.board.press(1),
-            _ => {}
+        if key == KeyCode::Char(' ') && !self.paused {
+            self.board.launch();
         }
     }
 
@@ -87,15 +82,17 @@ impl Game for BrickBall {
         if self.paused {
             return Status::Running;
         }
-        let held = |a, b| input.held(a) || input.held(KeyCode::Char(b));
-        let dir = if held(KeyCode::Left, 'a') {
-            -1
-        } else if held(KeyCode::Right, 'd') {
-            1
-        } else {
-            0
-        };
-        self.board.tick(dir);
+        let keys = [
+            (KeyCode::Left, -1),
+            (KeyCode::Char('a'), -1),
+            (KeyCode::Right, 1),
+            (KeyCode::Char('d'), 1),
+        ];
+        let (dir, provisional) = keys
+            .into_iter()
+            .find(|&(k, _)| input.held(k))
+            .map_or((0, false), |(k, dir)| (dir, input.provisional(k)));
+        self.board.tick(dir, provisional);
         if self.board.over() {
             return Status::Over(Outcome {
                 score: self.board.score,
@@ -134,7 +131,7 @@ mod tests {
     use super::*;
 
     fn held_right() -> Input {
-        let mut i = Input::new(true);
+        let mut i = Input::new(true, false);
         i.event(KeyCode::Right, KeyEventKind::Press, Instant::now());
         i
     }
@@ -156,7 +153,7 @@ mod tests {
     fn pause_freezes_the_board() {
         let mut g = BrickBall::new(5, 1);
         g.key(KeyCode::Char(' '));
-        g.tick(&Input::new(true));
+        g.tick(&Input::new(true, false));
         let (cx, balls) = (g.board.paddle_cx, g.board.balls.clone());
         g.key(KeyCode::Char('p'));
         let input = held_right();
@@ -170,15 +167,29 @@ mod tests {
     }
 
     #[test]
+    fn provisional_hold_moves_at_the_start_speed() {
+        let mut g = BrickBall::new(5, 1);
+        let mut input = Input::new(false, true);
+        input.event(KeyCode::Right, KeyEventKind::Press, Instant::now());
+        for _ in 0..3 {
+            let (cx, dt) = (g.board.paddle_cx, g.board.tick_len().as_secs_f64());
+            g.tick(&input);
+            let moved = g.board.paddle_cx - cx;
+            assert!(
+                (moved - board::PADDLE_SPEED_MIN * dt).abs() < 1e-9,
+                "{moved}"
+            );
+        }
+    }
+
+    #[test]
     fn keys_are_ignored_while_dying() {
         let mut g = BrickBall::new(5, 1);
         g.board.phase = Phase::Dying { left: 6 };
-        let cx = g.board.paddle_cx;
         g.key(KeyCode::Char('p'));
         assert!(!g.paused);
-        g.key(KeyCode::Right);
-        g.tick(&Input::new(true));
-        assert_eq!(g.board.paddle_cx, cx);
+        g.key(KeyCode::Char(' '));
+        assert_eq!(g.board.phase, Phase::Dying { left: 6 });
     }
 
     #[test]
@@ -186,7 +197,7 @@ mod tests {
         let mut g = BrickBall::new(5, 2);
         let b = &mut g.board;
         (b.phase, b.score, b.reached, b.bricks) = (Phase::Dying { left: 1 }, 40, 4, 3);
-        let Status::Over(o) = g.tick(&Input::new(true)) else {
+        let Status::Over(o) = g.tick(&Input::new(true, false)) else {
             panic!("not over");
         };
         assert_eq!(
@@ -216,14 +227,5 @@ mod tests {
         g.key(KeyCode::Char('p'));
         g.board.phase = Phase::Dying { left: 6 };
         assert_eq!(g.tick_rate(), board::BLINK);
-    }
-
-    #[test]
-    fn tap_moves_the_paddle_one_pixel() {
-        let mut g = BrickBall::new(5, 1);
-        let cx = g.board.paddle_cx;
-        g.key(KeyCode::Right);
-        g.tick(&Input::new(true));
-        assert_eq!(g.board.paddle_cx - cx, 1.0);
     }
 }

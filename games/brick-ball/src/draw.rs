@@ -527,6 +527,10 @@ mod tests {
         (b.balls[1].x, b.balls[1].y) = (20.5, 20.5);
         let px = pixels(&b);
         assert_eq!((px[20][20], px[21][20]), (Some(c(255)), Some(c(239))));
+        // Two balls each covering a pixel by 0.5 light it fully.
+        (b.balls[1].x, b.balls[1].y) = (20.5, 20.0);
+        let col: Vec<_> = (19..22).map(|y| pixels(&b)[y][20]).collect();
+        assert_eq!(col, [Some(c(239)), Some(c(255)), Some(c(239))]);
 
         // A capsule dropped by a brick, at a pixel center, covers its two
         // rows only.
@@ -544,7 +548,7 @@ mod tests {
             let mut b = Board::new(1, 1);
             b.cells = empty_cells();
             b.paddle_cx = cx;
-            b.tick(0);
+            b.tick(0, false);
             assert_eq!(b.phase, Phase::Serve);
             let px = pixels(&b);
             let ball = |y: usize| {
@@ -573,7 +577,7 @@ mod tests {
             let w = b.paddle_w() as usize;
             for k in 0..8 {
                 b.paddle_cx = 30.0 + 0.3 * k as f64;
-                b.tick(0);
+                b.tick(0, false);
                 let px = pixels(&b);
                 let first = (0..PW).find(|&x| px[42][x] == Some(c(PADDLE))).unwrap();
                 let ball: Vec<_> = (0..PW)

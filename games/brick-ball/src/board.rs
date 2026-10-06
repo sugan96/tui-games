@@ -125,7 +125,6 @@ pub struct Board {
     pub phase: Phase,
     hold: f64, // seconds of the current paddle hold
     hold_dir: i32,
-    pressed: i32, // direction of a single press since the last tick, -1, 0 or 1
     rng: StdRng,
 }
 
@@ -176,7 +175,6 @@ impl Board {
             phase: Phase::Serve,
             hold: 0.0,
             hold_dir: 0,
-            pressed: 0,
             rng: StdRng::seed_from_u64(run_seed),
         };
         board.serve();
@@ -219,14 +217,6 @@ impl Board {
         self.phase = Phase::Play;
     }
 
-    /// A single key press of direction dir (-1 or 1). The next tick moves the
-    /// paddle 1 pixel even when no hold is reported. Ignored while dying.
-    pub fn press(&mut self, dir: i32) {
-        if !matches!(self.phase, Phase::Dying { .. } | Phase::Over) {
-            self.pressed = dir;
-        }
-    }
-
     /// Length of the next tick: PLAY_TICK in Play, IDLE_TICK otherwise.
     pub fn tick_len(&self) -> Duration {
         if self.phase == Phase::Play {
@@ -237,10 +227,11 @@ impl Board {
     }
 
     /// One tick of tick_len() seconds, taken before the tick. dir is -1, 0 or
-    /// 1 for the paddle. Ignored while dying. The balls move at the
+    /// 1 for the paddle, provisional while the hold is not yet confirmed by a
+    /// key repeat. Ignored while dying. The balls move at the
     /// ball_speed() read at the start of the tick, so Slow starting or ending
     /// in this tick changes the speed from the next tick on.
-    pub fn tick(&mut self, dir: i32) {
+    pub fn tick(&mut self, dir: i32, provisional: bool) {
         let dt = self.tick_len().as_secs_f64();
         let speed = self.ball_speed();
         match self.phase {
@@ -250,10 +241,10 @@ impl Board {
             Phase::Clear { left } if left > dt => self.phase = Phase::Clear { left: left - dt },
             Phase::Clear { .. } => self.next_stage(),
             Phase::Serve => {
-                self.move_paddle(dir, dt);
+                self.move_paddle(dir, dt, provisional);
                 self.balls[0] = self.rest_ball();
             }
-            Phase::Play => self.play(dir, dt, speed),
+            Phase::Play => self.play(dir, dt, speed, provisional),
         }
     }
 
@@ -286,8 +277,8 @@ impl Board {
         format!("▬ {} bricks", self.bricks)
     }
 
-    fn play(&mut self, dir: i32, dt: f64, speed: f64) {
-        self.move_paddle(dir, dt);
+    fn play(&mut self, dir: i32, dt: f64, speed: f64, provisional: bool) {
+        self.move_paddle(dir, dt, provisional);
 
         self.slow = (self.slow - dt).max(0.0);
         if self.wide > 0.0 {
@@ -330,29 +321,23 @@ impl Board {
     }
 
     /// A held dir moves the paddle dir × paddle_speed(hold) × dt, then hold
-    /// grows by dt. A single press with no hold moves it exactly 1 pixel.
-    fn move_paddle(&mut self, mut dir: i32, dt: f64) {
-        let press = dir == 0 && self.pressed != 0;
-        if dir == 0 {
-            dir = self.pressed;
-        }
-        self.pressed = 0;
+    /// grows by dt. A provisional hold keeps hold at 0, so it moves at
+    /// PADDLE_SPEED_MIN and the ramp starts once the hold is confirmed. dir 0
+    /// ends the hold.
+    fn move_paddle(&mut self, dir: i32, dt: f64, provisional: bool) {
         if dir == 0 {
             self.hold = 0.0;
             self.hold_dir = 0;
             return;
         }
-        if dir != self.hold_dir {
+        if dir != self.hold_dir || provisional {
             self.hold = 0.0;
             self.hold_dir = dir;
         }
-        let step = if press {
-            1.0
-        } else {
-            paddle_speed(self.hold) * dt
-        };
-        self.paddle_cx += dir as f64 * step;
-        self.hold += dt;
+        self.paddle_cx += dir as f64 * paddle_speed(self.hold) * dt;
+        if !provisional {
+            self.hold += dt;
+        }
         self.clamp_paddle();
     }
 
@@ -574,7 +559,7 @@ mod tests {
     /// Ticks once and returns how far the paddle moved.
     fn moved(b: &mut Board, dir: i32) -> f64 {
         let before = b.paddle_cx;
-        b.tick(dir);
+        b.tick(dir, false);
         b.paddle_cx - before
     }
 
@@ -585,7 +570,7 @@ mod tests {
     /// Ticks once and returns the seconds the tick lasted.
     fn timed_tick(b: &mut Board, dir: i32) -> f64 {
         let dt = b.tick_len().as_secs_f64();
-        b.tick(dir);
+        b.tick(dir, false);
         dt
     }
 
@@ -608,7 +593,7 @@ mod tests {
     fn ball_at_the_left_edge_leaves_at_minus_60() {
         let mut b = empty(1);
         b.balls = vec![ball(b.paddle_left() + 0.01, 41.9, 0.0, 1.0)];
-        b.tick(0);
+        b.tick(0, false);
         let (dx, dy) = bounce_dir(-1.0);
         let got = b.balls[0];
         assert!(
@@ -625,7 +610,7 @@ mod tests {
             ball(left + w / 2.0, 41.9, 0.0, 1.0),
             ball(left + w - 0.01, 41.9, 0.0, 1.0),
         ];
-        b.tick(0);
+        b.tick(0, false);
         for (got, t) in b.balls.iter().zip([0.0, 1.0]) {
             let (dx, dy) = bounce_dir(t);
             assert!(
@@ -680,7 +665,7 @@ mod tests {
                 b.balls = vec![ball(30.0 - (y0 - 9.5) * a.tan(), y0, a.sin(), -a.cos())];
                 let mut hit = false;
                 for _ in 0..60 {
-                    b.tick(0);
+                    b.tick(0, false);
                     if b.cells[5][7] == Cell::Empty {
                         hit = true;
                         break;
@@ -696,12 +681,12 @@ mod tests {
     fn walls_and_ceiling_reflect() {
         let mut b = empty(1);
         b.balls = vec![ball(0.2, 20.0, -0.6, -0.8)];
-        b.tick(0);
+        b.tick(0, false);
         assert!(b.balls[0].dx > 0.0, "{:?}", b.balls[0]);
 
         let mut b = empty(1);
         b.balls = vec![ball(30.0, 0.2, 0.0, -1.0)];
-        b.tick(0);
+        b.tick(0, false);
         assert!(b.balls[0].dy > 0.0, "{:?}", b.balls[0]);
     }
 
@@ -709,14 +694,14 @@ mod tests {
     fn right_wall_reflects_and_keeps_the_ball_inside() {
         let mut b = empty(1);
         b.balls = vec![ball(59.8, 20.0, 0.6, -0.8)];
-        b.tick(0);
+        b.tick(0, false);
         assert!(b.balls[0].dx < 0.0 && b.balls[0].x < W, "{:?}", b.balls[0]);
 
         // A step can land exactly on x = W. The fold puts the ball back in
         // column 14, so the brick lookup stays inside the grid.
         let mut b = empty(1);
         b.balls = vec![ball(W, 10.5, 0.0, -1.0)];
-        b.tick(0);
+        b.tick(0, false);
         assert!(b.balls[0].x < W, "{:?}", b.balls[0]);
     }
 
@@ -728,7 +713,7 @@ mod tests {
             b.cells[0][0] = Cell::Brick(1);
             b.cells[5][7] = cell;
             b.balls = vec![ball];
-            b.tick(0);
+            b.tick(0, false);
             b
         };
 
@@ -762,7 +747,7 @@ mod tests {
             b.cells[0][0] = Cell::Brick(1);
             b.cells[5][7] = Cell::Brick(2);
             b.balls = vec![ball(30.0, 10.0 + 0.05 * k as f64, 0.0, -1.0)];
-            b.tick(0);
+            b.tick(0, false);
             assert_eq!(b.cells[5][7], Cell::Brick(1), "k {k}");
             assert!(b.balls[0].y >= 10.0, "k {k}: {:?}", b.balls[0]);
         }
@@ -772,7 +757,7 @@ mod tests {
     fn last_ball_lost_costs_a_life_and_serves_again() {
         let mut b = empty(1);
         b.balls = vec![ball(30.0, 43.9, 0.0, 1.0)];
-        b.tick(0);
+        b.tick(0, false);
         assert_eq!((b.lives, b.phase, b.balls.len()), (2, Phase::Serve, 1));
         assert_eq!(b.balls[0].y, PADDLE_Y - 0.5);
     }
@@ -781,7 +766,7 @@ mod tests {
     fn losing_one_of_several_balls_costs_nothing() {
         let mut b = empty(1);
         b.balls.push(ball(30.0, 43.9, 0.0, 1.0));
-        b.tick(0);
+        b.tick(0, false);
         assert_eq!((b.lives, b.balls.len(), b.phase), (3, 1, Phase::Play));
     }
 
@@ -790,15 +775,15 @@ mod tests {
         let mut b = empty(1);
         b.lives = 1;
         b.balls = vec![ball(30.0, 43.9, 0.0, 1.0)];
-        b.tick(0);
+        b.tick(0, false);
         assert_eq!(b.phase, Phase::Dying { left: 6 });
         let cx = b.paddle_cx;
         for _ in 0..5 {
-            b.tick(1);
+            b.tick(1, false);
             assert!(!b.over());
             assert_eq!(b.paddle_cx, cx);
         }
-        b.tick(1);
+        b.tick(1, false);
         assert!(b.over());
     }
 
@@ -818,7 +803,7 @@ mod tests {
         let mut b = empty(3);
         b.cells[5][7] = Cell::Brick(1);
         b.balls = vec![ball(30.0, 10.2, 0.0, -1.0)];
-        b.tick(0);
+        b.tick(0, false);
         assert_eq!(b.cells[5][7], Cell::Empty);
         assert_eq!((b.lives, b.balls.len()), (3, 0));
         assert_eq!(b.phase, Phase::Clear { left: CLEAR_SECS });
@@ -925,7 +910,7 @@ mod tests {
         });
         let fell = |b: &mut Board| {
             let before = b.balls[0].y;
-            b.tick(0);
+            b.tick(0, false);
             b.balls[0].y - before
         };
         assert!(close(fell(&mut b), full, 1e-9), "the catch tick");
@@ -979,7 +964,7 @@ mod tests {
         });
         for k in 1..=30 {
             let before = row(&b);
-            b.tick(0);
+            b.tick(0, false);
             assert_eq!(b.phase, Phase::Play);
             let step = if k % 3 == 0 { 1.0 } else { 0.0 };
             assert_eq!(row(&b) - before, step, "tick {k}: {:?}", b.capsule);
@@ -1021,7 +1006,7 @@ mod tests {
             (Phase::Serve, None, (3.0 - dt, 2.0 - dt))
         );
         for _ in 0..10 {
-            b.tick(0);
+            b.tick(0, false);
         }
         assert_eq!((b.phase, (b.wide, b.slow)), (Phase::Serve, left));
     }
@@ -1071,7 +1056,7 @@ mod tests {
             x: b.paddle_cx,
             y: 41.9,
         });
-        b.tick(0);
+        b.tick(0, false);
         assert_eq!((b.capsule, b.wide), (None, WIDE_SECS));
 
         let mut b = empty(1);
@@ -1080,10 +1065,10 @@ mod tests {
             x: 2.0,
             y: 41.9,
         });
-        b.tick(0);
+        b.tick(0, false);
         assert!(b.capsule.is_some());
         for _ in 0..10 {
-            b.tick(0);
+            b.tick(0, false);
             if let Some(cap) = b.capsule {
                 assert!(cap.y < H, "{cap:?}");
             }
@@ -1107,10 +1092,10 @@ mod tests {
             y: 41.9,
         });
         let in_paddle_row = |b: &Board| b.capsule.is_some_and(|cap| cap.y.floor() == PADDLE_Y);
-        b.tick(0);
+        b.tick(0, false);
         assert!(in_paddle_row(&b), "{:?}", b.capsule);
         b.paddle_cx = 10.0;
-        b.tick(0);
+        b.tick(0, false);
         assert!(in_paddle_row(&b), "{:?}", b.capsule);
         assert_eq!(b.wide, 0.0);
     }
@@ -1120,10 +1105,10 @@ mod tests {
         // At stage 1 a tick moves the ball 0.48 px: to y 42.08, then 42.57.
         let mut b = empty(1);
         b.balls = vec![ball(10.0, 41.6, 0.0, 1.0)];
-        b.tick(0);
+        b.tick(0, false);
         assert_eq!(b.balls[0].y.floor(), PADDLE_Y, "{:?}", b.balls[0]);
         b.paddle_cx = 10.0;
-        b.tick(0);
+        b.tick(0, false);
         assert!(b.balls[0].dy > 0.0, "{:?}", b.balls[0]);
     }
 
@@ -1140,7 +1125,7 @@ mod tests {
         assert_eq!(moved(&mut b, 0), 0.0);
         assert!(close(moved(&mut b, 1), 0.99, 1e-9));
         for _ in 0..100 {
-            b.tick(1);
+            b.tick(1, false);
         }
         assert_eq!(b.paddle_cx, W - b.paddle_w() / 2.0);
         assert_eq!(b.balls, vec![ball(b.paddle_cx, PADDLE_Y - 0.5, 0.0, -1.0)]);
@@ -1157,20 +1142,31 @@ mod tests {
     }
 
     #[test]
-    fn single_press_moves_one_pixel_on_the_next_tick() {
-        let mut b = Board::new(1, 1);
-        b.press(1);
-        assert_eq!(moved(&mut b, 0), 1.0);
-        assert_eq!(moved(&mut b, 0), 0.0);
-        b.press(-1);
-        assert_eq!(moved(&mut b, 0), -1.0);
-        // A press during a hold adds nothing: the hold moves the paddle once.
-        b.press(1);
-        assert!(close(moved(&mut b, 1), 0.99, 1e-9));
+    fn provisional_hold_moves_at_the_start_speed() {
+        // 24 play ticks of 16.667 ms are 0.4 s.
+        let mut b = empty(1);
+        b.paddle_cx = 10.0;
+        for _ in 0..24 {
+            b.tick(1, true);
+        }
+        assert!(close(b.paddle_cx, 22.0, 1e-3), "{}", b.paddle_cx);
+        assert_eq!(b.hold, 0.0);
+    }
 
-        b.phase = Phase::Dying { left: 6 };
-        b.press(1);
-        assert_eq!(moved(&mut b, 0), 0.0);
+    #[test]
+    fn ramp_starts_when_the_hold_is_confirmed() {
+        let mut b = empty(1);
+        b.paddle_cx = 10.0;
+        for _ in 0..24 {
+            b.tick(1, true);
+        }
+        // From 30 px/s at the first confirmed tick to 90 after 0.2 s.
+        let dt = PLAY_TICK.as_secs_f64();
+        for k in 0..=12 {
+            let want = paddle_speed(k as f64 * dt) * dt;
+            assert!(close(moved(&mut b, 1), want, 1e-9), "tick {k}: want {want}");
+        }
+        assert!(close(moved(&mut b, 1), PADDLE_SPEED_MAX * dt, 1e-9));
     }
 
     #[test]
@@ -1218,7 +1214,7 @@ mod tests {
                 stall: STALL_SECS - 0.001,
                 ..ball(30.0, 20.0, dx, dy)
             }];
-            b.tick(0);
+            b.tick(0, false);
             let got = b.balls[0];
             let turn = got.dx.atan2(-got.dy).to_degrees() - MAX_ANGLE_DEG;
             assert!(
@@ -1243,7 +1239,7 @@ mod tests {
             stalled(ball(30.0, 10.2, 0.6, -0.8)),
             stalled(ball(b.paddle_cx, 41.9, 0.0, 1.0)),
         ];
-        b.tick(0);
+        b.tick(0, false);
         assert_eq!((b.balls[0].dx, b.balls[0].dy), (0.6, 0.8));
         assert_eq!((b.balls[1].dx, b.balls[1].dy), bounce_dir(0.0));
     }

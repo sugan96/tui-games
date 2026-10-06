@@ -34,6 +34,7 @@ const ENTRY: Entry = Entry {
     about: "first to 7 wins",    // one line on the game menu
     starts: &[("1-3", "level")], // key chips on the game menu
     stages: false,               // true shows a stage picker on the menu and passes the chosen stage
+    hold_on_press: false,        // true: without release events a press holds its key for 400 ms
     start,                       // fn(char, u32) -> Option<Box<dyn Game>>
     min_size: (80, 24),          // smallest terminal your draw fits in
     thumb: &[                    // library card art: 12 rows of 24 palette letters
@@ -49,6 +50,8 @@ fn main() -> anyhow::Result<()> {
 
 `start` gets every key pressed on the game menu except `q`, Enter as `'\n'`, and the chosen stage, or 1 without stages. Return `None` for keys you do not use.
 
+Set `hold_on_press` for continuous controls such as a paddle, so they move on the press in terminals without key release events. Leave it false for tap controls, where a short tap would otherwise count as a 400 ms hold.
+
 ## 3. Implement `Game`
 
 ```rust
@@ -61,7 +64,7 @@ impl Game for Pong {
 ```
 
 - `q` quits on every screen and never reaches the game. Do not use it as a game key.
-- For continuous movement, check `input.held(KeyCode::Left)` in `tick`. Key repeats and releases reach `Input`, not `key`.
+- For continuous movement, check `input.held(KeyCode::Left)` in `tick`. Key repeats and releases reach `Input`, not `key`. With `hold_on_press`, `input.provisional(key)` is true while a hold rests on the press alone, before a key repeat confirms it, so a paddle can move gently until then.
 - Play any death animation yourself, then return `Status::Over(Outcome { score, variant, summary })` once. `variant` shows in the top table, for example "level 2". `summary` is one line on the game over screen.
 - A game with stages implements `fn reached(&self) -> u32`, the highest stage the run has got to. The SDK saves it as progress when the run ends and when the player quits with `q` during a run. A game without stages leaves it out and gets the default 0.
 - When `ctx.dim` is true, draw muted and leave out key hints. A modal covers the middle.

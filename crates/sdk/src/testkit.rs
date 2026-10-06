@@ -73,7 +73,7 @@ pub fn check(e: &Entry) {
         KeyCode::Char(' '),
         KeyCode::Enter,
     ];
-    let input = Input::new(true);
+    let input = Input::new(true, false);
     let (w, h) = e.min_size;
     let stages: &[u32] = if e.stages { &[1, CHECK_STAGE] } else { &[1] };
     for c in keys {

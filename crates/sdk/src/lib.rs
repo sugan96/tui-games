@@ -48,10 +48,7 @@ pub fn run(entry: &'static Entry) -> anyhow::Result<()> {
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::REPORT_EVENT_TYPES)
         )?;
     }
-    let result = run_loop(
-        &mut terminal,
-        App::new(db, entry, Input::new(release_events)),
-    );
+    let result = run_loop(&mut terminal, App::new(db, entry, release_events));
     if release_events {
         execute!(stdout(), PopKeyboardEnhancementFlags)?;
     }

@@ -15,14 +15,14 @@ Spec: docs/spec.md
 - The rules module of brick ball imports nothing from ratatui or rusqlite.
 - Tests are plain #[cfg(test)] modules, no test frameworks. Every task leaves tests that fail if its logic breaks.
 - Implementers do not dispatch subagents.
-- Snake must keep playing exactly as before: its tests pass with only the signature edits the SDK task requires.
+- Snake keeps its rules and shares the SDK's held key rule: its tests pass with only the signature edits the SDK tasks require.
 
 Workspace dependencies available: anyhow 1, rand 0.10, ratatui 0.30, rusqlite 0.40 bundled, arcade-sdk by path. rand 0.10 API used here: `use rand::{RngExt, SeedableRng, rngs::StdRng};`, `StdRng::seed_from_u64(s)`, `rng.random_range(0..n)`, `rng.random::<f64>()`, `rng.random_bool(p)`, and `rand::random::<u64>()` for a run seed.
 
 Values from the spec that this plan uses, repeated here so every task reads the same numbers:
 
 - Board: 60 by 44 pixels in 60 by 22 cells, `x` 0 to 59, `y` 0 to 43, 0 at the top. Brick grid 15 columns of 4 by 1 pixel bricks, 10 rows at `y` 4 to 13. Paddle 1 pixel tall at `y` 42. Ball 1 pixel. HUD panel 16 columns, border included. The play screen fits 80 by 24, so `min_size` is (80, 24); the program needs 80 by 28 because the SDK game menu is 28 rows tall.
-- Tick 33 ms. Paddle moves 1 pixel on the first tick of a hold, rising evenly to 3 pixels per tick by the sixth tick. A single press also moves the paddle 1 pixel on the next tick.
+- Tick 16.67 ms while a ball is in play, 33 ms on serve, stage clear and pause, 200 ms per death blink half-period. Timers count real seconds, not ticks. Paddle speed rises evenly from 30 to 90 px/s over the first 0.2 s of a hold. While a hold is provisional the paddle moves at 30 px/s, and the ramp starts when a repeat confirms the hold. Brick ball sets `hold_on_press`.
 - Sawtooth: blocks of 5, `e = n - 2` when `n > 1` and `n % 5 == 1`, else `e = n`.
 - `g(e, k) = 1 - exp(-e / k)`. Ball speed `28 × (1 + 0.7 × g(e, 20))` px/s. Brick count `round(150 × (0.45 + 0.40 × g(e, 15)))`. Brick HP `1 + floor(4 × g(e, 25) + r)`, `r` uniform in [0, 1), never above 5. Paddle width `9 - round(3 × g(e, 30))`. Unbreakable bricks none before stage 8, then `round(count × 0.10 × g(e - 8, 20))`.
 - Lever table, floor (e = 0) to cap: speed 28 to 47.6, count 68 to 128, HP all 1 to all 5, paddle 9 to 6, unbreakable 0 to about 10%.
@@ -866,3 +866,58 @@ Files: `games/brick-ball/src/board.rs`, `games/brick-ball/src/main.rs`, `games/b
 - `draw.rs` `serve_ball_is_drawn_like_a_moving_ball`: a board in `Serve` with `paddle_cx` 30.0, 30.2, 30.5 and 30.7 lights exactly pixel (29, 41), (30, 41), (30, 41) and (30, 41) with 255, the paddle's middle pixel, and nothing in rows 40 or 42.
 
 Verify with `cargo build`, `cargo test`, `cargo clippy --all-targets`; `grep -rn "Render\|ARCADE_RENDER\|Locked\|MIN_TICK\|SMOOTH_TICK" games/brick-ball/src` must find nothing. Commit as `feat(brick-ball): smooth render becomes the rule with a squared falloff`.
+
+## Task 9: bright core shading and hold on press
+
+Added after play test 4 on 2026-10-06. The operator still saw a halo with the `c²` falloff, and found the paddle slow to respond in Terminal.app. The spec "Held keys" paragraph (SDK) and the shading and paddle sentences in "Brick ball" > "Play" are already updated. One commit on top of Task 8, including the edited `docs/spec.md` and this plan section.
+
+Files: `crates/sdk/src/input.rs`, `crates/sdk/src/game.rs`, `crates/sdk/src/app.rs`, `crates/sdk/src/testkit.rs`, `crates/sdk/src/lib.rs` (where `Input::new` is called), `games/snake/src/main.rs` (`hold_on_press: false`), `games/brick-ball/src/main.rs`, `games/brick-ball/src/board.rs`, `games/brick-ball/src/draw.rs`, `docs/adding-a-game.md` (the new `Entry` field), `docs/spec.md`, `docs/plan-brick-ball.md`.
+
+### Rules, exact
+
+SDK `Input`, terminals without release events:
+
+- Constants: `REPEAT_WINDOW` stays 150 ms and becomes the cap; `MIN_WINDOW: Duration = 30 ms`; `FIRST_REPEAT: Duration = 600 ms`; `PRESS_HOLD: Duration = 300 ms`; `REPEAT_FACTOR: f64 = 1.5`.
+- `Input::new(release_events: bool, hold_on_press: bool)`. New state: `repeats: u32` (follow-up presses of the current key) and `interval: Option<Duration>` (the gap between the last two repeats).
+- `press(key, now)`: a press of the same key as `last_press` within `gap_limit` continues the hold, where `gap_limit` is `FIRST_REPEAT` while `repeats == 0` with `hold_on_press`, and the current window otherwise, so 150 ms for the first repeat without `hold_on_press` and Snake plays as before (fix round 4). On a continuing press: `repeats += 1`; when `repeats >= 2`, `interval = Some(now - last_press_time)`; `key = Some(key)`; `until = Some(now + window)`. The window is `REPEAT_WINDOW` while `interval` is `None`, otherwise `(interval × REPEAT_FACTOR).clamp(MIN_WINDOW, REPEAT_WINDOW)`. On a new press (a different key, or the same key after the limit): `repeats = 0`, `interval = None`; with `hold_on_press`, `key = Some(key)` and `until = Some(now + PRESS_HOLD)`; without it, `key = None`. `last_press = Some((key, now))` in both cases. `held`, `clear`, `set_now` and the release-events path are unchanged.
+- `Entry` gains `pub hold_on_press: bool` after `stages`, documented: "Without release events a press starts a hold for 300 ms. For continuous controls such as a paddle. Leave false for tap controls." `App` or `lib::run` passes it to `Input::new`. Snake: `hold_on_press: false`. testkit fakes: `false`. `docs/adding-a-game.md` lists the field.
+
+Brick ball:
+
+- `ENTRY.hold_on_press: true`. Remove the single press rule: `Board::press` and its `pressed` state go, `BrickBall::key` no longer handles Left, Right, `a`, `d`; the tests `single_press_moves_one_pixel_on_the_next_tick` and `tap_moves_the_paddle_one_pixel` go.
+- `board.rs` (fix round 4): `HOLD_GAP_SECS: f64 = 0.3` and a `still` field, seconds since the paddle last moved. In `move_paddle`, `dir == 0` adds `dt` to `still` and resets `hold` and `hold_dir` only when `hold < HOLD_RAMP_SECS` or `still > HOLD_GAP_SECS`; a nonzero `dir` sets `still = 0`. This covers the stop between the 300 ms press hold and a first OS repeat up to 600 ms after the press.
+- `draw.rs`: for each ball, the overlapped pixel with the largest coverage (ties: the first in row-major order) is drawn at `BALL` 255. Every other overlapped pixel gets `trace(c) = FIELD_GREY + round(c³ × 22)`, at most 236. Traces of several balls add before the cube; a core always wins over a trace. The brick and paddle rule is unchanged: a lit pixel keeps its color unless the ball covers at least half of it, and a core pixel always covers at least a quarter, so a core over a brick shows only when its coverage is at least half. `shade` is replaced by `trace`. Temporary comparison switch, removed after the operator decides: environment variable `ARCADE_SHADE=squared` restores the Task 8 rule (no fixed core, `233 + round(c² × 22)`); read once in `main` as in Task 7, default is the new rule. Plan decision.
+
+### Tests
+
+- `input.rs`: `first_repeat_within_600_ms_continues_the_hold` (with `hold_on_press`, press at 0, repeat at 375 ms: held at 380, not at 525, one window after the repeat); `window_follows_the_measured_interval` (with `hold_on_press`, repeats 90 ms apart: held 100 ms after the last, not 150; repeats 15 ms apart: window is 30 ms); `hold_on_press_starts_at_the_press_and_ends_after_300_ms_without_repeats` (held at 10 ms and 290 ms, not at 310); `hold_on_press_hands_over_to_repeats` (press at 0, repeats at 375 and 465: held at 500, not held at 465 + 150 = 615 + 1); `without_hold_on_press_a_tap_is_not_a_hold` (the existing first assertion, kept, and a second press 375 ms later is not a hold either); `release_events_hold_from_press_to_release` unchanged; `key_repeat_holds_until_repeats_stop` adapted to the new windows, the hold starting at the second repeat.
+- `app.rs`: an existing hold test passes `hold_on_press` through; one assertion that `Input::new(false, entry.hold_on_press)` is what `App` builds for a `FAKE` with `hold_on_press: true` (held right after a press).
+- `board.rs`: remove the press tests; `paddle_speed_ramps_over_a_fifth_of_a_second` unchanged. Fix round 4: `paddle_keeps_full_speed_through_a_short_stop` (a stop below full speed restarts the ramp at 0.99 px per 33 ms tick, a 66 ms stop at full speed keeps 2.97); `paddle_accelerates_from_one_to_three_and_stops_at_walls` stops for 0.33 s before checking the restart.
+- `main.rs`: `keys_are_ignored_while_dying` keeps only the `p` and space checks.
+- `draw.rs`: `ball_has_one_full_core_and_faint_traces`: a ball centered at `(30.5, 21.0)` covers (30, 20) and (30, 21) by 0.5 each; the first in row-major order, (30, 20), is 255 and (30, 21) is 236 (`233 + round(0.125 × 22) = 236`); centered at `(31.0, 21.0)` four pixels at 0.25: (30, 20) is 255 and the other three are 233 (`round(0.015625 × 22) = 0`); centered at `(30.75, 21.0)`: (30, 20) with 0.75 is 255, (30, 21) with 0.25 is 233. `two_balls_each_have_a_core`. `squared_shade_is_only_behind_the_switch`: with the switch value the Task 8 values hold (239 at 0.5), without it the new ones.
+
+Verify with `cargo build`, `cargo test`, `cargo clippy --all-targets`. Commit as `feat(sdk): hold on press without release events, brick ball ball core shading`.
+
+## Task 10: squared shading stays, gentle paddle until a hold is confirmed
+
+Added after play test 5 on 2026-10-06. The operator chose the Task 8 shading over the bright core (the core stepped visibly) and found the Terminal.app paddle too sensitive (a 300 ms press-hold under the full ramp moved about 21 px per tap). The spec is already updated. Two commits on top of Task 9, one per change, the spec and plan edits going with the second.
+
+### Commit A: drop the bright core shading
+
+Files: `games/brick-ball/src/draw.rs`, `games/brick-ball/src/main.rs`.
+
+- Remove the core and trace rule, the `ARCADE_SHADE` switch (its `OnceLock`, the read in `main`, the static in `draw.rs`) and `trace`. Restore the Task 8 rule exactly: `shade(c) = FIELD_GREY + round(c.clamp(0, 1)² × (BALL - FIELD_GREY))` for every overlapped pixel, several balls summed and clamped to 1 before shading, the brick and paddle half rule unchanged.
+- Tests: `shade_is_squared` (255, 239, 234, 233) and `smooth_ball_shades_two_pixels_by_coverage` back to the Task 8 values (a ball centered at `(30.5, 21.0)` lights (30, 20) and (30, 21) with 239; at `(30.5, 20.5)` only (30, 20) with 255; at `(31.0, 21.0)` four pixels with 234). Remove `ball_has_one_full_core_and_faint_traces`, `two_balls_each_have_a_core`, `squared_shade_is_only_behind_the_switch`; keep a two-ball test that checks coverage adds (two balls each covering a pixel by 0.5 light it with 255).
+- Commit as `fix(brick-ball): drop the bright core shading, the squared falloff stays`.
+
+### Commit B: provisional holds move the paddle gently
+
+Files: `crates/sdk/src/input.rs`, `games/brick-ball/src/board.rs`, `games/brick-ball/src/main.rs`, `docs/adding-a-game.md` (one sentence on `Input::provisional` next to `held`), `docs/spec.md`, `docs/plan-brick-ball.md`.
+
+- `input.rs`: `PRESS_HOLD` becomes 400 ms. New `pub fn provisional(&self, key: KeyCode) -> bool`: true when `held(key)` and the hold rests on the press alone, that is no release events, `hold_on_press`, and `repeats == 0`. False as soon as a repeat continues the hold, and always false with release events.
+- `board.rs`: remove `HOLD_GAP_SECS`, the `still` field and the keep-alive branch in `move_paddle`. `move_paddle(&mut self, dir: i32, dt: f64, provisional: bool)`: with `dir == 0` reset `hold` to 0 as before Task 9; when `provisional`, move by `PADDLE_SPEED_MIN × dt` and leave `hold` at 0; otherwise ramp as before. `Board::tick(dir, provisional)` passes it through; `Serve` and `Play` both move the paddle.
+- `main.rs`: the adapter computes `dir` as today and `provisional` as `input.provisional(key)` for the key that gave `dir` (Left or `a`, Right or `d`).
+- Tests: `input.rs` `press_hold_is_provisional_until_a_repeat` (held and provisional at 10 ms, not provisional after the first repeat at 375 ms, not held at 401 ms with no repeat) and `release_events_are_never_provisional`. `board.rs` `provisional_hold_moves_at_the_start_speed` (0.4 s of provisional ticks moves 12 px and leaves `hold` at 0), `ramp_starts_when_the_hold_is_confirmed` (after 0.4 s provisional, confirmed ticks accelerate from 30 to 90 over 0.2 s), `paddle_accelerates_from_one_to_three_and_stops_at_walls` back to its Task 5 form with the stop resetting the ramp; remove `paddle_keeps_full_speed_through_a_short_stop`. `main.rs`: one test that a provisional Right hold moves the paddle `PADDLE_SPEED_MIN × dt` on a tick.
+- Commit as `feat(sdk): provisional holds so a paddle moves gently until a repeat confirms the key`.
+
+Verify with `cargo build`, `cargo test`, `cargo clippy --all-targets`; `grep -rn "ARCADE_SHADE\|trace(\|HOLD_GAP" games/brick-ball/src` must find nothing.

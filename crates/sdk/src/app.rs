@@ -47,8 +47,8 @@ pub const NAME_LEN: usize = 3;
 pub const IDLE_TICK: Duration = Duration::from_millis(250);
 
 impl App {
-    /// Starts on the game menu.
-    pub fn new(db: Db, entry: &'static Entry, input: Input) -> anyhow::Result<App> {
+    /// Starts on the game menu. `release_events`: the terminal sends key release events.
+    pub fn new(db: Db, entry: &'static Entry, release_events: bool) -> anyhow::Result<App> {
         let max_stage = if entry.stages {
             db.reached(entry.id)?
         } else {
@@ -60,7 +60,7 @@ impl App {
             top: db.top(entry.id, TOP_N)?,
             quit: false,
             ticks: 0,
-            input,
+            input: Input::new(release_events, entry.hold_on_press),
             stage: 1,
             max_stage,
             db,
@@ -286,6 +286,7 @@ pub mod tests {
         about: "fake about line",
         starts: &[("0-9", "score")],
         stages: false,
+        hold_on_press: false,
         start: fake_start,
         min_size: (20, 10),
         thumb: &[
@@ -310,20 +311,21 @@ pub mod tests {
         about: "staged about line",
         starts: &[("enter", "start")],
         stages: true,
+        hold_on_press: false,
         start: staged_start,
         min_size: FAKE.min_size,
         thumb: FAKE.thumb,
     };
 
     pub fn app() -> App {
-        App::new(Db::open_in_memory().unwrap(), &FAKE, Input::new(true)).unwrap()
+        App::new(Db::open_in_memory().unwrap(), &FAKE, true).unwrap()
     }
 
     /// The staged game with progress saved up to stage `max`.
     pub fn staged_app(max: u32) -> App {
         let db = Db::open_in_memory().unwrap();
         db.raise("staged", max).unwrap();
-        App::new(db, &STAGED, Input::new(true)).unwrap()
+        App::new(db, &STAGED, true).unwrap()
     }
 
     pub fn start(c: char) -> Box<dyn Game> {
@@ -398,6 +400,25 @@ pub mod tests {
         let (keys, held) = LOG.take();
         assert_eq!(keys, [KeyCode::Right], "releases are not key presses");
         assert_eq!(held, [true, false]);
+    }
+
+    #[test]
+    fn hold_on_press_reaches_the_input() {
+        static HOLD: Entry = Entry {
+            hold_on_press: true,
+            ..FAKE
+        };
+        let mut a = App::new(Db::open_in_memory().unwrap(), &HOLD, false).unwrap();
+        press(&mut a, "5");
+        let t = Instant::now();
+        a.on_key(KeyCode::Right, KeyEventKind::Press, t).unwrap();
+        a.on_timer(t).unwrap();
+        let (_, held) = LOG.take();
+        assert_eq!(
+            held,
+            [true],
+            "held right after a press without release events"
+        );
     }
 
     #[test]
