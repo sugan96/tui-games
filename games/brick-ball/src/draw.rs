@@ -31,12 +31,22 @@ const HP_COLORS: [(u8, u8); 5] = [(223, 180), (215, 173), (209, 167), (167, 131)
 const UNBREAKABLE: (u8, u8) = (245, 239);
 const PADDLE: u8 = 173;
 const BALL: u8 = 255;
+/// Grey index of the field, theme::FIELD[0]. A ball is shaded from it toward
+/// BALL by coverage.
+const FIELD_GREY: u8 = 233;
 
 const fn c(i: u8) -> Color {
     Color::Indexed(i)
 }
 
-/// Chip color of a capsule and of its HUD timer.
+/// Grey of a pixel a ball covers by c: FIELD_GREY + round(c² × (BALL - FIELD_GREY)),
+/// c clamped to 0..1. Squared so the neighbours of the main pixel fall off fast.
+fn shade(c: f64) -> u8 {
+    let c = c.clamp(0.0, 1.0);
+    FIELD_GREY + (c * c * f64::from(BALL - FIELD_GREY)).round() as u8
+}
+
+/// Color of a capsule and of its HUD timer chip.
 fn power_color(p: Power) -> Color {
     match p {
         Power::Wide => c(45),
@@ -84,8 +94,8 @@ pub fn draw(frame: &mut Frame, game: &BrickBall, ctx: &DrawCtx) {
         let launch = Span::styled("SPACE TO LAUNCH", theme::MUTED);
         ui::center_line(frame, inner, inner.y + 13, vec![launch]);
     }
-    if let Phase::Clear { ticks } = b.phase {
-        clear_modal(frame, b, ticks);
+    if let Phase::Clear { left } = b.phase {
+        clear_modal(frame, b, left);
     }
     // Drawn last: it holds the keys that apply and fits inside the clear modal.
     if game.paused {
@@ -106,7 +116,23 @@ fn keys() -> Line<'static> {
     Line::from(spans)
 }
 
-/// Pixel colors, None for the field. Later layers win: bricks, paddle, balls.
+/// Pixels a 1 wide, h tall block at (x, y) overlaps, as (x, y, coverage):
+/// the overlap on x times the overlap on y, each in 0..1. For a 1 by 1 block
+/// the overlap with pixel p is 1 - |x - p| clamped to 0..1.
+fn coverage(x: f64, y: f64, h: f64) -> impl Iterator<Item = (usize, usize, f64)> {
+    let span = |a: f64, len: f64| {
+        (a.floor() as usize..=(a + len).floor() as usize).map(move |p| {
+            (
+                p,
+                ((a + len).min(p as f64 + 1.0) - a.max(p as f64)).clamp(0.0, 1.0),
+            )
+        })
+    };
+    span(y, h).flat_map(move |(py, cy)| span(x, 1.0).map(move |(px, cx)| (px, py, cx * cy)))
+}
+
+/// Pixel colors, None for the field. Later layers win: bricks, paddle,
+/// capsule, balls.
 fn pixels(b: &Board) -> [[Option<Color>; PW]; PH] {
     let mut px = [[None; PW]; PH];
     let (bw, top) = (board::BRICK_W as usize, board::BRICK_TOP as usize);
@@ -136,18 +162,46 @@ fn pixels(b: &Board) -> [[Option<Color>; PW]; PH] {
         }
     }
 
+    // A ball or capsule is drawn as a block centered on its position, so a
+    // ball at a pixel center covers that pixel alone.
+    let at = |v: f64| v - 0.5;
+
+    // The capsule: a 1 by 2 block, in its power color on each pixel it covers
+    // by half or more. It falls straight down, so it keeps the pixel its x
+    // floors to.
+    if let Some(cap) = b.capsule {
+        for (x, y, cover) in coverage(cap.x.floor(), at(cap.y), 2.0) {
+            if cover >= 0.5
+                && let Some(p) = px.get_mut(y).and_then(|row| row.get_mut(x))
+            {
+                *p = Some(power_color(cap.kind));
+            }
+        }
+    }
+
+    // Ball coverage per pixel, summed over the balls, is shaded by shade(),
+    // which caps it at 1. A brick, the paddle or the capsule shows the shade
+    // only at coverage 0.5 or more.
+    let mut light = [[0.0; PW]; PH];
     for ball in &b.balls {
-        if let Some(p) = px
-            .get_mut(ball.y.floor() as usize)
-            .and_then(|row| row.get_mut(ball.x.floor() as usize))
-        {
-            *p = Some(c(BALL));
+        for (x, y, cover) in coverage(at(ball.x), at(ball.y), 1.0) {
+            if let Some(l) = light.get_mut(y).and_then(|row| row.get_mut(x)) {
+                *l += cover;
+            }
+        }
+    }
+    for (row, lights) in px.iter_mut().zip(&light) {
+        for (p, &l) in row.iter_mut().zip(lights) {
+            let shade = shade(l);
+            if shade > FIELD_GREY && (p.is_none() || l >= 0.5) {
+                *p = Some(c(shade));
+            }
         }
     }
     px
 }
 
-/// Two pixels per cell with half blocks, then the capsule chip.
+/// Two pixels per cell with half blocks.
 fn paint(buf: &mut Buffer, inner: Rect, b: &Board, dim: bool) {
     let field = theme::FIELD[0];
     let lit = |p: Option<Color>| p.map(|color| if dim { theme::DIM_C } else { color });
@@ -165,21 +219,6 @@ fn paint(buf: &mut Buffer, inner: Rect, b: &Board, dim: bool) {
                 cell.set_symbol(sym).set_fg(fg).set_bg(bg);
             }
         }
-    }
-
-    if let Some(cap) = b.capsule {
-        let bg = if dim {
-            theme::DIM_C
-        } else {
-            power_color(cap.kind)
-        };
-        let (x, y) = (cap.x.floor() as u16, cap.y.floor() as u16 / 2);
-        buf.set_string(
-            inner.x + x,
-            inner.y + y,
-            cap.kind.letter().to_string(),
-            chip(bg),
-        );
     }
 }
 
@@ -243,12 +282,13 @@ fn paint_hud(buf: &mut Buffer, inner: Rect, b: &Board, ctx: &DrawCtx, dim: bool)
 
     put(13, &[("POWER", theme::AMBER)]);
     let timers = [
-        (Power::Wide, b.wide, board::WIDE_TICKS),
-        (Power::Slow, b.slow, board::SLOW_TICKS),
+        (Power::Wide, b.wide, board::WIDE_SECS),
+        (Power::Slow, b.slow, board::SLOW_SECS),
     ];
     let mut row = 14;
-    for (p, ticks, max) in timers.into_iter().filter(|t| t.1 > 0) {
-        let on = (ticks * 5).div_ceil(max) as usize;
+    for (p, left, max) in timers.into_iter().filter(|t| t.1 > 0.0) {
+        // Marks lit out of 5: ceil(5 × left / max).
+        let on = (5.0 * left / max).ceil() as usize;
         let color = power_color(p);
         put(
             row,
@@ -257,7 +297,7 @@ fn paint_hud(buf: &mut Buffer, inner: Rect, b: &Board, ctx: &DrawCtx, dim: bool)
                 (" ", theme::TEXT),
                 (&"▰".repeat(on), Style::new().fg(color)),
                 (&"▱".repeat(5 - on), theme::METER_OFF),
-                (&format!(" {}s", board::secs(ticks)), theme::MUTED),
+                (&format!(" {}s", board::secs(left)), theme::MUTED),
             ],
         );
         row += 1;
@@ -292,7 +332,7 @@ fn pause_modal(frame: &mut Frame, b: &Board) {
     );
 }
 
-fn clear_modal(frame: &mut Frame, b: &Board, ticks: u32) {
+fn clear_modal(frame: &mut Frame, b: &Board, left: f64) {
     let area = ui::centered(frame.area(), 36, 10);
     frame.render_widget(Clear, area);
     let title = format!("STAGE {} CLEAR", b.stage);
@@ -323,7 +363,7 @@ fn clear_modal(frame: &mut Frame, b: &Board, ticks: u32) {
         inner.y + 5,
         vec![Span::styled(next, theme::MUTED)],
     );
-    let countdown = format!("STAGE {} IN {}", b.stage + 1, board::secs(ticks));
+    let countdown = format!("STAGE {} IN {}", b.stage + 1, board::secs(left));
     ui::center_line(
         frame,
         inner,
@@ -412,8 +452,142 @@ mod tests {
         let paddle: String = (25..=33).map(|x| at(&s, x + 1, 22)).collect();
         assert_eq!(paddle, "▀".repeat(9), "{s}");
         assert_eq!((at(&s, 25, 22), at(&s, 35, 22)), (' ', ' '));
-        // Ball at (30, 41.5): the lower pixel of inner row 20.
-        assert_eq!(at(&s, 31, 21), '▄', "{s}");
+        // Ball at (29.5, 41.5) on the paddle's middle pixel 29: the lower
+        // pixel of inner row 20.
+        assert_eq!(at(&s, 30, 21), '▄', "{s}");
+    }
+
+    /// Lit pixels above the paddle row as (x, y, color), for one ball at (x, y).
+    fn lit(x: f64, y: f64) -> Vec<(usize, usize, Color)> {
+        let mut b = Board::new(1, 1);
+        (b.cells, b.phase) = (empty_cells(), Phase::Play);
+        (b.balls[0].x, b.balls[0].y) = (x, y);
+        let px = pixels(&b);
+        let mut out = Vec::new();
+        for (py, row) in px.iter().enumerate().take(board::PADDLE_Y as usize) {
+            for (pxx, p) in row.iter().enumerate() {
+                if let Some(color) = *p {
+                    out.push((pxx, py, color));
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn shade_is_squared() {
+        assert_eq!(
+            (shade(1.0), shade(0.5), shade(0.25), shade(0.0)),
+            (255, 239, 234, 233)
+        );
+    }
+
+    #[test]
+    fn smooth_ball_shades_two_pixels_by_coverage() {
+        // The square is centered on the ball, so a ball at a pixel center
+        // lights that pixel alone.
+        assert_eq!(lit(30.5, 21.0), [(30, 20, c(239)), (30, 21, c(239))]);
+        assert_eq!(lit(30.5, 20.5), [(30, 20, c(255))]);
+        let quarter = c(234);
+        assert_eq!(
+            lit(31.0, 21.0),
+            [
+                (30, 20, quarter),
+                (31, 20, quarter),
+                (30, 21, quarter),
+                (31, 21, quarter)
+            ]
+        );
+    }
+
+    #[test]
+    fn smooth_colored_pixels_change_only_at_half_coverage() {
+        let mut b = Board::new(1, 1);
+        (b.cells, b.phase) = (empty_cells(), Phase::Play);
+        // A ball in paddle row 42, 0.4 over pixel 30 and 0.6 over pixel 31.
+        let paddle_x = 30;
+        (b.balls[0].x, b.balls[0].y) = (paddle_x as f64 + 1.1, 42.5);
+        b.capsule = Some(Capsule {
+            kind: Power::Slow,
+            x: 10.0,
+            y: 20.9,
+        });
+        let px = pixels(&b);
+        // Covered 0.4 by the ball: the paddle stays; 0.6: the ball shade.
+        assert_eq!(px[42][paddle_x], Some(c(PADDLE)));
+        assert_eq!(px[42][paddle_x + 1], Some(c(233 + 8)));
+        // Capsule rows 20, 21, 22 covered 0.6, 1 and 0.4.
+        let col: Vec<_> = (19..24).map(|y| px[y][10]).collect();
+        let slow = Some(power_color(Power::Slow));
+        assert_eq!(col, [None, slow, slow, None, None]);
+
+        // Two balls on one pixel add up, capped at 1.
+        b.balls = vec![b.balls[0]; 2];
+        (b.balls[0].x, b.balls[0].y) = (20.5, 21.0);
+        (b.balls[1].x, b.balls[1].y) = (20.5, 20.5);
+        let px = pixels(&b);
+        assert_eq!((px[20][20], px[21][20]), (Some(c(255)), Some(c(239))));
+
+        // A capsule dropped by a brick, at a pixel center, covers its two
+        // rows only.
+        b.capsule.as_mut().unwrap().y = 20.5;
+        let col: Vec<_> = (19..23).map(|y| pixels(&b)[y][10]).collect();
+        assert_eq!(col, [None, slow, slow, None]);
+    }
+
+    #[test]
+    fn serve_ball_is_drawn_like_a_moving_ball() {
+        // The ball rests on the paddle's middle pixel in row 41: that pixel
+        // alone, at full light, nothing in the rows above or below but the
+        // paddle. The paddle starts at 30.0, on a pixel edge.
+        for (cx, want) in [(30.0, 29), (30.2, 30), (30.5, 30), (30.7, 30)] {
+            let mut b = Board::new(1, 1);
+            b.cells = empty_cells();
+            b.paddle_cx = cx;
+            b.tick(0);
+            assert_eq!(b.phase, Phase::Serve);
+            let px = pixels(&b);
+            let ball = |y: usize| {
+                px[y]
+                    .iter()
+                    .enumerate()
+                    .filter(|&(_, &p)| p.is_some() && p != Some(c(PADDLE)))
+                    .map(|(x, &p)| (x, p))
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(ball(41), [(want, Some(c(BALL)))], "paddle_cx {cx}");
+            assert_eq!((ball(40), ball(42)), (vec![], vec![]), "paddle_cx {cx}");
+            let paddle: Vec<_> = (0..PW).filter(|&x| px[42][x] == Some(c(PADDLE))).collect();
+            assert_eq!((paddle.len(), paddle[4]), (9, want), "paddle_cx {cx}");
+        }
+    }
+
+    #[test]
+    fn serve_ball_keeps_its_paddle_pixel_at_every_width() {
+        // Widths 8, 9 and, with W, 12. Moving the paddle 0.3 px at a time
+        // across two pixels keeps the ball on the paddle's middle drawn pixel:
+        // the leftmost drawn pixel plus (w - 1) / 2 rounded down.
+        for (paddle, wide) in [(8, 0.0), (9, 0.0), (9, 5.0)] {
+            let mut b = Board::new(1, 1);
+            (b.levers.paddle, b.wide) = (paddle, wide);
+            let w = b.paddle_w() as usize;
+            for k in 0..8 {
+                b.paddle_cx = 30.0 + 0.3 * k as f64;
+                b.tick(0);
+                let px = pixels(&b);
+                let first = (0..PW).find(|&x| px[42][x] == Some(c(PADDLE))).unwrap();
+                let ball: Vec<_> = (0..PW)
+                    .filter(|&x| px[41][x].is_some())
+                    .map(|x| (x, px[41][x]))
+                    .collect();
+                assert_eq!(
+                    ball,
+                    [(first + (w - 1) / 2, Some(c(BALL)))],
+                    "w {w}, paddle_cx {}",
+                    b.paddle_cx
+                );
+            }
+        }
     }
 
     #[test]
@@ -440,16 +614,25 @@ mod tests {
     }
 
     #[test]
-    fn capsule_draws_a_letter_chip() {
+    fn capsule_draws_two_colored_pixels() {
         let mut g = BrickBall::new(1, 1);
         g.board.capsule = Some(Capsule {
             kind: Power::Wide,
             x: 10.0,
             y: 20.0,
         });
+        g.board.wide = 5.0;
+        // Pixels (10, 20) and (10, 21) fill inner cell (10, 10).
         let buf = buffer(&g);
         let cell = &buf[(1 + 10, 1 + 10)];
-        assert_eq!((cell.symbol(), cell.bg), ("W", c(45)));
+        assert_eq!((cell.symbol(), cell.fg, cell.bg), ("▀", c(45), c(45)));
+        // No letter on the board, the HUD still has the W chip.
+        let s = render(&g, false);
+        for line in s.lines().skip(1).take(PH / 2) {
+            let board: String = line.chars().skip(1).take(PW).collect();
+            assert!(!board.contains('W'), "{s}");
+        }
+        has(&s, &[" W "]);
     }
 
     #[test]
@@ -459,7 +642,7 @@ mod tests {
         has(&render(&g, false), &["PAUSED", "stage 1  ·  0"]);
 
         g.paused = false;
-        g.board.phase = Phase::Clear { ticks: 60 };
+        g.board.phase = Phase::Clear { left: 2.0 };
         g.board.score = 300;
         has(
             &render(&g, false),
@@ -473,6 +656,16 @@ mod tests {
 
         g.paused = true;
         has(&render(&g, false), &["PAUSED", "stage 1  ·  300"]);
+    }
+
+    #[test]
+    fn power_bar_and_countdown_use_seconds() {
+        let mut g = BrickBall::new(1, 1);
+        g.board.wide = 9.4;
+        has(&render(&g, false), &[" W  ▰▰▰▰▱ 10s"]);
+
+        g.board.phase = Phase::Clear { left: 1.2 };
+        has(&render(&g, false), &["STAGE 2 IN 2"]);
     }
 
     #[test]

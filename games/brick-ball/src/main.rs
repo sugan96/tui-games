@@ -106,11 +106,13 @@ impl Game for BrickBall {
         Status::Running
     }
 
-    /// board::BLINK while dying, board::TICK otherwise.
+    /// board::BLINK while dying, board::IDLE_TICK while paused, the board's
+    /// tick_len otherwise.
     fn tick_rate(&self) -> Duration {
         match self.board.phase {
             Phase::Dying { .. } => board::BLINK,
-            _ => board::TICK,
+            _ if self.paused => board::IDLE_TICK,
+            _ => self.board.tick_len(),
         }
     }
 
@@ -200,6 +202,20 @@ mod tests {
         assert_eq!(g.reached(), 3);
         g.board.reached = 6;
         assert_eq!(g.reached(), 6);
+    }
+
+    #[test]
+    fn tick_rate_follows_the_ball() {
+        let mut g = BrickBall::new(5, 1);
+        g.key(KeyCode::Char(' '));
+        assert_eq!(g.board.phase, Phase::Play);
+        assert_eq!(g.tick_rate(), g.board.tick_len());
+        assert_ne!(g.tick_rate(), board::IDLE_TICK);
+        g.key(KeyCode::Char('p'));
+        assert_eq!(g.tick_rate(), board::IDLE_TICK);
+        g.key(KeyCode::Char('p'));
+        g.board.phase = Phase::Dying { left: 6 };
+        assert_eq!(g.tick_rate(), board::BLINK);
     }
 
     #[test]

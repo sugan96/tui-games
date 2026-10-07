@@ -33,7 +33,7 @@ Values from the spec that this plan uses, repeated here so every task reads the 
 - Capsule chance 8% per broken brick, only when no capsule is falling. Falls at 20 px/s. `W` +3 pixels for 15 s, `S` 0.75 speed for 10 s, `M` every ball splits into 3, up to 9 balls.
 - Death blink: six half-periods of 200 ms.
 - Stage clear: countdown of 2 seconds.
-- Colors (xterm 256): field 233. HP 1 to 5 light/dark: 223/180, 215/173, 209/167, 167/131, 124/88. Unbreakable 245/239. Paddle 173. Ball 255. Capsule chips `W` on 45, `S` on 82, `M` on 201. HUD labels amber 214, score terracotta.
+- Colors (xterm 256): field 233. HP 1 to 5 light/dark: 223/180, 215/173, 209/167, 167/131, 124/88. Unbreakable 245/239. Paddle 173. Ball 255. Capsule a 1 by 2 pixel block in its power color, `W` 45, `S` 82, `M` 201. HUD labels amber 214, score terracotta.
 - Variant `stage <start>-<reached>`. Summary `▬ <bricks> bricks`.
 
 ## Task 1: SDK stage progress
@@ -758,3 +758,111 @@ Tests in `draw.rs`, with `testkit::render` for text and a `Terminal<TestBackend>
 Verify with `cargo build`, `cargo test`, `cargo clippy --all-targets`. Manual play is not possible for the implementer; say so in the report.
 
 Commit as `feat(brick-ball): game adapter, drawing, HUD, overlays and thumbnail`.
+
+## Task 5: lock the frame to the pixel
+
+Added after the operator's play test on 2026-10-02: at angles the ball looked jittery. Root cause: a fixed 33 ms tick moves the ball 0.5 to 0.9 pixels per axis per frame and `floor` sampling turns that into an irregular mix of no move, one pixel and diagonal jumps. The spec "Play" section now says the frame is locked to the pixel. This task implements that. It is one commit on top of Task 4 and includes the already edited `docs/spec.md` and this plan section.
+
+Files: `games/brick-ball/src/board.rs`, `games/brick-ball/src/main.rs`, `games/brick-ball/src/draw.rs`, `docs/spec.md`, `docs/plan-brick-ball.md`.
+
+### Rules, exact
+
+- `pub const MIN_TICK: Duration = Duration::from_millis(16)` and `pub const IDLE_TICK: Duration = Duration::from_millis(33)`. `TICK`, `DT`, `ticks()`, `WIDE_TICKS`, `SLOW_TICKS`, `CLEAR_TICKS`, `STALL_TICKS` and `HOLD_RAMP` go away.
+- Seconds constants: `WIDE_SECS: f64 = 15.0`, `SLOW_SECS: f64 = 10.0`, `STALL_SECS: f64 = 10.0`, `CLEAR_SECS: f64 = 2.0`, `HOLD_RAMP_SECS: f64 = 0.2`, `PADDLE_SPEED_MIN: f64 = 30.0` and `PADDLE_SPEED_MAX: f64 = 90.0` pixels per second.
+- `pub fn tick_len(&self) -> Duration`: in `Play`, `1 / (ball_speed() × m)` seconds where `m` is the largest `max(|dx|, |dy|)` over the balls, never below `MIN_TICK`; in every other phase `IDLE_TICK`. `Board::tick(dir)` keeps its signature and advances the board by `dt = self.tick_len().as_secs_f64()` taken at the start of the tick, so the board moves by exactly the time the SDK waited.
+- Timers are `f64` seconds: `wide`, `slow`, each ball's `stall`, and `Phase::Clear { left: f64 }`. They count down by `dt` only in the phases the spec names. `secs(left: f64) -> u32` is `left.ceil()` for the HUD and the clear modal, and the power bar fraction is `left / WIDE_SECS` or `left / SLOW_SECS`.
+- Capsule: `cap.y += CAPSULE_SPEED * dt`. The catch rule is unchanged.
+- Paddle: `hold: f64` is the seconds the current direction has been held, reset when the direction changes. Speed is `PADDLE_SPEED_MIN + (PADDLE_SPEED_MAX - PADDLE_SPEED_MIN) × min(hold / HOLD_RAMP_SECS, 1)`; the paddle moves `dir × speed × dt` and then `hold += dt`. The single press still moves exactly 1 pixel on the next tick. `paddle_step` is replaced by `pub fn paddle_speed(hold: f64) -> f64`.
+- Ball: `dist = ball_speed() × dt`, sub-steps unchanged. For the fastest ball `dist × m` is one pixel up to floating point noise, so the drawn pixel is `(v + PIXEL_EPS).floor()` with `pub const PIXEL_EPS: f64 = 1e-6` in `draw.rs`, used for the ball and the capsule. Physics keeps plain `floor`. Plan decision.
+- `main.rs`: `tick_rate()` returns `board::BLINK` while dying, `board::IDLE_TICK` while paused, else `self.board.tick_len()`.
+
+### Tests, replacing the tick based ones
+
+board.rs:
+
+- `tick_len_is_one_major_pixel`: a single ball with `(dx, dy) = (0.6, 0.8)` at stage 1 speed gives `tick_len` within 1 µs of `1 / (28 × 0.8)` seconds; straight up at the cap speed gives `1 / 47.6`; a speed forced to 1000 gives `MIN_TICK`.
+- `fastest_ball_sets_the_tick`: two balls, `(0.6, 0.8)` and `(0.98, 0.2)`; the tick follows `0.98`.
+- `idle_phases_tick_at_33_ms`: `Serve`, `Clear` and `Over` return `IDLE_TICK`.
+- `frame_moves_the_major_axis_exactly_one_pixel`: an empty grid, no bricks, one ball at `(30.3, 25.7)` for each of the angles 10°, 30°, 45° and 60° from vertical, 200 ticks each. On every tick where no wall was hit, `(major + PIXEL_EPS).floor()` changes by exactly 1 and the minor by 0 or 1. The test fails on the old fixed tick.
+- `paddle_speed_ramps_over_a_fifth_of_a_second`: `paddle_speed(0.0) == 30.0`, `paddle_speed(0.1) == 60.0`, `paddle_speed(0.2) == 90.0`, `paddle_speed(1.0) == 90.0`. Holding Right from rest for one 33 ms tick moves the paddle by about 1 pixel.
+- `timers_count_seconds_not_ticks`: catch W, then tick until the summed `dt` passes 15 s; `wide` is 0 only after that, whatever the tick length. The same for S and 10 s with a different ball angle, so the tick length differs.
+- `capsule_falls_twenty_pixels_per_second`: over ticks summing to 1 s the capsule drops 20 px, at two different ball angles.
+- `clear_counts_down_two_seconds`: `Clear { left: 2.0 }` reaches `next_stage` after ticks summing to 2 s.
+- `stall_turns_after_ten_seconds`: adapted from the existing stall test to seconds.
+- Every existing test that counted ticks is rewritten in seconds; keep its name and intent.
+
+main.rs: `tick_rate_follows_the_ball`: in `Play` it equals `board.tick_len()`, paused it is `IDLE_TICK`, dying it is `BLINK`.
+
+draw.rs: `power_bar_and_countdown_use_seconds`: `wide = 9.4` draws 4 of 5 bar marks and `10s`; `Clear { left: 1.2 }` shows `STAGE 2 IN 2`.
+
+Verify with `cargo build`, `cargo test`, `cargo clippy --all-targets`. Manual play is not possible for the implementer; say so in the report.
+
+Commit as `feat(brick-ball): lock the frame to the pixel so angled balls move evenly`.
+
+## Task 6: fixed deadline, synchronized output, steady speed per tick, capsule as pixels
+
+Added after play test 2 on 2026-10-06. The ball was still uneven while falling. Research (`.superpowers/sdd/plan-brick-ball/smooth-motion-research.md`) found three code defects, all fixed here, and a display refresh beat that Task 7 addresses. One commit on top of Task 5, including the already edited `docs/spec.md` and this plan section.
+
+Files: `crates/sdk/src/lib.rs`, `games/brick-ball/src/board.rs`, `games/brick-ball/src/draw.rs`, `docs/spec.md`, `docs/plan-brick-ball.md`.
+
+### Rules, exact
+
+- SDK `run_loop` in `crates/sdk/src/lib.rs`: keep a fixed deadline. After `on_timer`, `next = next + app.tick_rate()`; if that is already at or before `now`, `next = now + app.tick_rate()` instead, so the loop never runs two ticks without a draw between them. When a key starts a game (`!was_playing && app.playing()`) the deadline restarts from now as today. Wrap each draw: `execute!(stdout, BeginSynchronizedUpdate)` before `terminal.draw` and `execute!(stdout, EndSynchronizedUpdate)` after it, from `crossterm::terminal` (crossterm 0.29 is already a dependency). Snake shares the loop and gets the same period.
+- `Board::tick` reads `ball_speed()` once at the start, the same value `tick_len` used, and passes it to `move_ball`; the Slow timer and an S catch in the same tick change the speed from the next tick on. Plan decision: `move_ball(&mut self, i: usize, speed: f64)`.
+- `draw.rs`: the capsule is drawn in `pixels()` as two pixels, `(floor(x), floor(y))` and the pixel below it, in `power_color(kind)`, after the bricks and before the balls; `paint` no longer writes a letter into a cell; the `chip` helper stays for the HUD only. `PIXEL_EPS` still applies to the capsule position.
+
+### Tests
+
+- `crates/sdk/src/lib.rs` or `app.rs`: extract the deadline rule into `pub fn next_deadline(prev: Instant, now: Instant, rate: Duration) -> Instant` and test it: a late tick advances from the previous deadline; a deadline already passed restarts from now; two consecutive late ticks never yield a deadline before now.
+- `board.rs` `slow_changes_speed_only_from_the_next_tick`: a ball straight down at stage 1, catch S on a tick; that tick still moves the ball exactly one drawn pixel; when the timer runs out the ball still moves exactly one pixel on that tick. Fails without the fix (one still frame at the start, one two pixel jump at the end).
+- `draw.rs` `capsule_draws_two_colored_pixels`: a W capsule at `(10.0, 20.0)` colors pixels (10, 20) and (10, 21) with 45, so inner cell (10, 10) shows `▀` with fg 45 and bg 45; no `W` glyph appears on the board; the HUD still shows the `W` chip when wide is active. Replaces `capsule_draws_a_letter_chip`.
+
+Verify with `cargo build`, `cargo test`, `cargo clippy --all-targets`. Commit as `fix(brick-ball): fixed deadline, synchronized frames, steady speed per tick and a pixel capsule`.
+
+## Task 7: smooth render mode under evaluation
+
+One commit on top of Task 6. The pixel-locked tick cannot be a whole number of display refreshes (the app cannot read the refresh rate and the speed curve needs 28 to 47.6 px/s), so each one pixel step stays on screen for 4 or 5 refreshes at 120 Hz, which reads as uneven motion. The cure used by games is to render at a divisor of the refresh and move objects by sub-pixel amounts. In a terminal the sub-pixel position is shown by shading. This task adds that as a mode behind `ARCADE_RENDER`, default `smooth`, so the operator can compare; the losing mode is removed afterwards.
+
+Files: `games/brick-ball/src/board.rs`, `games/brick-ball/src/main.rs`, `games/brick-ball/src/draw.rs`.
+
+### Rules, exact
+
+- `pub enum Render { Smooth, Locked }` in `main.rs`, read once at start from `ARCADE_RENDER` (`locked` gives `Locked`, anything else `Smooth`), stored on `BrickBall` and passed to the board and the draw. Plan decision: `Board` gets a `pub render: Render` field set by `BrickBall::new`, so `tick_len` can branch; put the enum in `board.rs` so both can use it.
+- `Board::tick_len`: in `Smooth`, `Play` returns `SMOOTH_TICK: Duration = Duration::from_micros(16_667)`; every other phase and `Locked` behave as today.
+- `draw.rs` `pixels()` in `Smooth`: moving objects are drawn by coverage. A ball at `(x, y)` is a 1 by 1 square covering up to four pixels; each pixel gets coverage `cx × cy` where `cx = 1 - |x - px|` clamped to 0..1 and likewise for `cy`. The ball pixel color is the field color 233 blended toward 255 by coverage through the grey ramp: index `233 + round(coverage × 22)`, so coverage 1 gives 255 and the total light over the four pixels is constant. A pixel already holding a brick or the paddle keeps its color unless the ball coverage is at least 0.5, then it shows the ball shade (plan decision: no color blending over bricks). The capsule block is drawn the same way with its power color: coverage below 0.5 leaves the field, 0.5 and above paints the power color (plan decision: no blend for colored objects; the xterm cube is too coarse). The paddle keeps its current drawing. Several balls add their coverage per pixel, capped at 1. In `Locked`, drawing is unchanged (`PIXEL_EPS` floor).
+- `main.rs` `tick_rate` is unchanged in shape; it returns `board.tick_len()` which now branches on the mode.
+
+### Tests
+
+- `board.rs` `smooth_mode_ticks_at_sixty_hertz`: in `Smooth`, `Play` gives `SMOOTH_TICK`; `Serve` gives `IDLE_TICK`; `Locked` still gives the pixel time.
+- `draw.rs` `smooth_ball_shades_two_pixels_by_coverage`: `Smooth`, a ball at `(30.0, 20.5)` over the field lights pixels (30, 20) and (30, 21) with grey 244 each (`233 + round(0.5 × 22)`); at `(30.0, 20.0)` only pixel (30, 20) with 255; at `(30.5, 20.5)` four pixels with 239 (`233 + round(0.25 × 22) = 239`).
+- `draw.rs` `locked_mode_draws_as_before`: the existing ball pixel test passes with `Locked`.
+- `main.rs` `render_mode_comes_from_the_environment`: a helper `Render::from_env_value(Option<&str>)` maps `Some("locked")` to `Locked` and `None` or `Some("smooth")` to `Smooth`; `std::env` is read only in `main`.
+- `frame_moves_the_major_axis_exactly_one_pixel` keeps passing in `Locked`; in `Smooth` the drawn pixel is not expected to change every frame, so that test sets `Locked`.
+
+Verify with `cargo build`, `cargo test`, `cargo clippy --all-targets`. Commit as `feat(brick-ball): smooth render mode with sub-pixel shading behind ARCADE_RENDER`.
+
+## Task 8: smooth render becomes the rule, with a squared falloff
+
+Added after play test 3 on 2026-10-06. The operator compared the two render modes and chose smooth, and asked for less halo around the ball. The spec "Play" section is now final: fixed 16.67 ms tick, sub-pixel shading by `c²`, no render modes. One commit on top of Task 7, including the already edited `docs/spec.md` and this plan section.
+
+Files: `games/brick-ball/src/board.rs`, `games/brick-ball/src/main.rs`, `games/brick-ball/src/draw.rs`, `docs/spec.md`, `docs/plan-brick-ball.md`.
+
+### Rules, exact
+
+- Remove the `Render` enum, `Render::from_env_value`, the `RENDER` `OnceLock`, the `ARCADE_RENDER` read in `main`, the `render` field on `Board`, `MIN_TICK`, and the pixel-locked branch of `tick_len`. `SMOOTH_TICK` is renamed `PLAY_TICK` (`Duration::from_micros(16_667)`); `tick_len` returns `PLAY_TICK` in `Play` and `IDLE_TICK` otherwise. Remove `PIXEL_EPS` if nothing uses it after the change.
+- `draw.rs`: a `fn shade(c: f64) -> u8` returns `FIELD_GREY + round(c.clamp(0, 1)² × (BALL - FIELD_GREY))`, so `shade(1.0) == 255`, `shade(0.5) == 239`, `shade(0.25) == 234`, `shade(0.0) == 233`. Ball pixels use it; the coverage sum of several balls is clamped to 1 before shading. The brick and paddle rule (a lit pixel keeps its color unless coverage is at least 0.5) and the capsule threshold rule are unchanged.
+- The `Serve` special case in `pixels()` goes: the resting ball is drawn by the same centered rule. `rest_ball` puts the ball at `y = PADDLE_Y - 0.5` (41.5), so its centered square is exactly pixel row 41, and `x = ceil(paddle_cx) - 0.5`, the center of the paddle's middle pixel, so the ball is one full pixel also when `paddle_cx` is on a pixel edge (it starts at 30.0).
+- The capsule needs no clock: at 20 px/s and 60 ticks per second it moves exactly a third of a pixel per tick and the half threshold makes it step one pixel every third tick.
+
+### Tests
+
+- Delete the tests that only hold for the locked mode: `frame_moves_the_major_axis_exactly_one_pixel`, `tick_len_is_one_major_pixel`, `fastest_ball_sets_the_tick`, `smooth_mode_ticks_at_sixty_hertz` (replaced below), `locked_mode_draws_as_before`, `render_mode_comes_from_the_environment`.
+- `board.rs` `play_ticks_at_sixty_hertz`: `Play` gives `PLAY_TICK`, `Serve`, `Clear` and `Over` give `IDLE_TICK`.
+- `board.rs`: the tests that were forced into locked mode (`a_hit_puts_the_ball_back_outside_the_brick`, `capsule_that_passed_the_paddle_row_beside_the_paddle_is_not_caught`, `ball_that_passed_the_paddle_row_beside_the_paddle_is_not_bounced`, `slow_changes_speed_only_from_the_next_tick`, the timer and capsule tests) are rewritten for the fixed tick, keeping their names and intent; positions are chosen for a step of `speed × 1/60` pixels. `slow_changes_speed_only_from_the_next_tick` now asserts that the move on the catch tick uses the pre-catch speed and the move on the following tick uses the slowed speed.
+- `board.rs` `capsule_steps_one_pixel_every_third_tick`: over 30 play ticks the capsule's drawn row (the row whose coverage is at least half) changes exactly every third tick.
+- `board.rs` `rest_ball_sits_on_pixel_row_41`: `rest_ball().y == 41.5`.
+- `draw.rs` `shade_is_squared`: the four values above. `smooth_ball_shades_two_pixels_by_coverage` is updated to the squared values: a ball centered at `(30.5, 21.0)` lights (30, 20) and (30, 21) with 239 each; centered at `(30.5, 20.5)` only (30, 20) with 255; centered at `(31.0, 21.0)` four pixels with 234.
+- `draw.rs` `serve_ball_is_drawn_like_a_moving_ball`: a board in `Serve` with `paddle_cx` 30.0, 30.2, 30.5 and 30.7 lights exactly pixel (29, 41), (30, 41), (30, 41) and (30, 41) with 255, the paddle's middle pixel, and nothing in rows 40 or 42.
+
+Verify with `cargo build`, `cargo test`, `cargo clippy --all-targets`; `grep -rn "Render\|ARCADE_RENDER\|Locked\|MIN_TICK\|SMOOTH_TICK" games/brick-ball/src` must find nothing. Commit as `feat(brick-ball): smooth render becomes the rule with a squared falloff`.
