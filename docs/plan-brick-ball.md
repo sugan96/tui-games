@@ -921,3 +921,45 @@ Files: `crates/sdk/src/input.rs`, `games/brick-ball/src/board.rs`, `games/brick-
 - Commit as `feat(sdk): provisional holds so a paddle moves gently until a repeat confirms the key`.
 
 Verify with `cargo build`, `cargo test`, `cargo clippy --all-targets`; `grep -rn "ARCADE_SHADE\|trace(\|HOLD_GAP" games/brick-ball/src` must find nothing.
+
+## Task 11: picker repeats, give up on q, paddle row bounce, next life line
+
+Added on 2026-10-07 from the first play test's open items; the operator approved all four. Four commits on top of Task 10, one per change; the spec and plan edits (already in the working tree) go with the first.
+
+### Commit A: arrow repeats scroll the stage picker
+
+Files: `crates/sdk/src/app.rs`, `docs/spec.md`, `docs/plan-brick-ball.md`.
+
+- `App::on_key` (app.rs:74-79) passes only `Press` to the screen handler. Change: on the game menu, a `Repeat` of `Left` or `Right` is handled like a `Press`; everywhere else repeats still only feed the hold tracker.
+- Test: `arrow_repeats_scroll_the_picker`: a staged app with max stage 5; `Right` press then two `Right` repeats leave the picker at 4; a `Repeat` of `Enter` on the menu does not start a game; a `Repeat` during play changes nothing but the hold tracker.
+- Commit as `feat(sdk): arrow key repeats scroll the stage picker`.
+
+### Commit B: q during a run gives up
+
+Files: `crates/sdk/src/game.rs`, `crates/sdk/src/app.rs`, `crates/sdk/src/testkit.rs`, `games/brick-ball/src/main.rs`, `docs/adding-a-game.md`.
+
+- `Game` gains `fn give_up(&self) -> Option<Outcome> { None }` after `reached`, documented: "The outcome of the run so far, for `q` during a run. Return it to have the run end with a game over and the score recorded; the default quits at once."
+- `App::on_key`: on `q` while playing, call `game.give_up()`; with `Some(outcome)` follow the exact path a `Status::Over(outcome)` from `tick` takes (record, raise progress, name entry or game over); with `None` behave as today (raise progress, quit). `q` on the game over screen and the menu still quits.
+- Brick ball: `give_up` returns `Some(Outcome { score, variant, summary })` from the board, in every phase but `Over`.
+- `testkit::check` calls `give_up` once on a running game and asserts that a returned outcome's variant and summary are not empty.
+- Tests: `app.rs` `q_during_a_run_records_a_given_outcome` (a fake whose `give_up` returns a score of 7: after `q` the screen is game over or name entry, the db holds a row with score 7, progress was raised, `quit` is false; a second `q` quits) and `q_during_a_run_without_an_outcome_quits` (the existing fake: `quit` true, no row). `main.rs` `give_up_reports_the_run_so_far`.
+- `docs/adding-a-game.md`: one bullet on `give_up` in step 3.
+- Commit as `feat(sdk): q during a run ends it with a game over when the game gives an outcome`.
+
+### Commit C: a paddle arriving under a low ball bounces it
+
+Files: `games/brick-ball/src/board.rs`.
+
+- In `move_ball` (board.rs:445-449) the paddle test is `dy > 0 && floor(oy) < PADDLE_Y && floor(y) == PADDLE_Y && over_paddle(x)`. Add a second case: `dy > 0 && floor(oy) == PADDLE_Y && floor(y) == PADDLE_Y && over_paddle(x)`, that is a falling ball already inside the paddle row and over the paddle at the end of the sub-step. Both cases bounce the same way: position reverted to `(ox, oy)`, direction from `bounce_dir(t)`, `stall` reset. A ball below the paddle row (`floor(y) > PADDLE_Y`) is still lost.
+- Tests: `paddle_arriving_under_a_ball_inside_its_row_bounces_it`: a ball falling at `(10.3, 42.2)` with the paddle elsewhere; move the paddle under it and tick once; the ball now moves up and is not lost. `ball_below_the_paddle_row_is_still_lost`: a ball at `y = 43.2` over the paddle is lost on the next tick. The existing `ball_that_passed_the_paddle_row_beside_the_paddle_is_not_bounced` still passes.
+- Commit as `fix(brick-ball): bounce a falling ball already inside the paddle row when the paddle arrives`.
+
+### Commit D: no next life line at the cap
+
+Files: `games/brick-ball/src/draw.rs`.
+
+- The stage clear modal (draw.rs:359) shows `next life at stage N` only when `lives < MAX_LIVES`; at the cap the line is left out and the rows below move up, or the row stays blank, whichever keeps the modal's size; plan decision: keep the modal size and leave the row blank.
+- Test: `clear_modal_hides_the_next_life_line_at_the_cap`: with 5 lives the text has no `next life`; with 3 lives it has `next life at stage 5`.
+- Commit as `fix(brick-ball): hide the next life line at the life cap`.
+
+Verify with `cargo build`, `cargo test`, `cargo clippy --all-targets` after each commit.

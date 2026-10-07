@@ -71,12 +71,16 @@ impl App {
         matches!(self.screen, Screen::Playing(_))
     }
 
-    /// Every key event. Repeats and releases only feed the hold tracker, and only while playing.
+    /// Every key event. Repeats and releases only feed the hold tracker, and only while playing,
+    /// except that a repeat of an arrow on the game menu moves the stage picker like a press.
     pub fn on_key(&mut self, key: KeyCode, kind: KeyEventKind, now: Instant) -> anyhow::Result<()> {
         if self.playing() {
             self.input.event(key, kind, now);
         }
-        if kind == KeyEventKind::Press {
+        let picker_repeat = kind == KeyEventKind::Repeat
+            && matches!(self.screen, Screen::Menu)
+            && matches!(key, KeyCode::Left | KeyCode::Right);
+        if kind == KeyEventKind::Press || picker_repeat {
             self.handle_key(key)?;
         }
         Ok(())
@@ -488,6 +492,27 @@ pub mod tests {
         assert_eq!(a.stage, 3);
         keys(&mut a, &[KeyCode::Left]);
         assert_eq!(a.stage, 2);
+    }
+
+    #[test]
+    fn arrow_repeats_scroll_the_picker() {
+        let mut a = staged_app(5);
+        let t = Instant::now();
+        a.on_key(KeyCode::Right, KeyEventKind::Press, t).unwrap();
+        a.on_key(KeyCode::Right, KeyEventKind::Repeat, t).unwrap();
+        a.on_key(KeyCode::Right, KeyEventKind::Repeat, t).unwrap();
+        assert_eq!(a.stage, 4);
+        a.on_key(KeyCode::Enter, KeyEventKind::Repeat, t).unwrap();
+        assert!(
+            matches!(a.screen, Screen::Menu),
+            "an Enter repeat starts no game"
+        );
+        a.on_key(KeyCode::Enter, KeyEventKind::Press, t).unwrap();
+        assert!(a.playing());
+        a.on_key(KeyCode::Right, KeyEventKind::Repeat, t).unwrap();
+        let (keys, _) = LOG.take();
+        assert!(keys.is_empty(), "a repeat during play is not a key press");
+        assert_eq!(a.stage, 4, "a repeat during play leaves the picker");
     }
 
     #[test]
