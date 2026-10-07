@@ -25,7 +25,8 @@ const CHECK_STAGE: u32 = 20;
 /// that runs to Over under a stream of keys within 100 000 ticks, drawing at
 /// its minimum size, live and dimmed, along the way. A game with stages runs
 /// from stage 1 and from `CHECK_STAGE`, and must report at least its start
-/// stage as reached.
+/// stage as reached. An outcome from `give_up` on a running game must have
+/// a variant and a summary.
 pub fn check(e: &Entry) {
     assert!(
         crate::info::valid_id(e.id),
@@ -81,6 +82,18 @@ pub fn check(e: &Entry) {
             let Some(mut g) = (e.start)(c, stage) else {
                 panic!("{} {c:?}: no game at stage {stage}", e.id);
             };
+            if let Some(o) = g.give_up() {
+                assert!(
+                    !o.variant.is_empty(),
+                    "{} {c:?}: give_up without variant",
+                    e.id
+                );
+                assert!(
+                    !o.summary.is_empty(),
+                    "{} {c:?}: give_up without summary",
+                    e.id
+                );
+            }
             let mut over = false;
             for i in 0..100_000 {
                 assert!(!g.tick_rate().is_zero(), "{} {c:?}: zero tick rate", e.id);

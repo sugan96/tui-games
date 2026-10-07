@@ -316,11 +316,7 @@ fn paint_hud(buf: &mut Buffer, inner: Rect, b: &Board, ctx: &DrawCtx, dim: bool)
 fn pause_modal(frame: &mut Frame, b: &Board) {
     let area = ui::centered(frame.area(), 30, 7);
     frame.render_widget(Clear, area);
-    let block = ui::modal(
-        "PAUSED",
-        theme::ACCENT_HI,
-        &[("p", "resume"), ("q", "quit")],
-    );
+    let block = ui::modal("PAUSED", theme::ACCENT_HI, &[("p", "resume"), ("q", "end")]);
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let text = format!("stage {}  ·  {}", b.stage, b.score);
@@ -643,7 +639,7 @@ mod tests {
     fn paused_and_clear_draw_their_modals() {
         let mut g = BrickBall::new(1, 1);
         g.paused = true;
-        has(&render(&g, false), &["PAUSED", "stage 1  ·  0"]);
+        has(&render(&g, false), &["PAUSED", "stage 1  ·  0", "q  end"]);
 
         g.paused = false;
         g.board.phase = Phase::Clear { left: 2.0 };

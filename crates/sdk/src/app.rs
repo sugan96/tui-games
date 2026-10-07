@@ -87,14 +87,18 @@ impl App {
     }
 
     /// A key press. q quits on every screen except name entry, where it is a letter.
-    /// q during a run of a game with stages saves its progress first.
+    /// q during a run ends it like an Over from `tick` when the game gives up with
+    /// an outcome. Otherwise it quits, and a game with stages saves its progress first.
     pub fn handle_key(&mut self, key: KeyCode) -> anyhow::Result<()> {
         if key == KeyCode::Char('q') && !matches!(self.screen, Screen::NameEntry { .. }) {
-            if let Screen::Playing(game) = &self.screen
-                && self.entry.stages
-            {
-                let reached = game.reached();
-                self.save_progress(reached)?;
+            if let Screen::Playing(game) = &self.screen {
+                if let Some(outcome) = game.give_up() {
+                    return self.end_run(outcome);
+                }
+                if self.entry.stages {
+                    let reached = game.reached();
+                    self.save_progress(reached)?;
+                }
             }
             self.quit = true;
             return Ok(());
@@ -155,8 +159,7 @@ impl App {
         Ok(())
     }
 
-    /// The main loop's timer. Ticks the game while playing. When it ends, records
-    /// the outcome and moves to name entry if it made the table, else game over.
+    /// The main loop's timer. Ticks the game while playing and ends the run when it is over.
     pub fn on_timer(&mut self, now: Instant) -> anyhow::Result<()> {
         self.input.set_now(now);
         let Screen::Playing(game) = &mut self.screen else {
@@ -166,6 +169,12 @@ impl App {
         let Status::Over(outcome) = game.tick(&self.input) else {
             return Ok(());
         };
+        self.end_run(outcome)
+    }
+
+    /// Ends the run in play: records the outcome, raises the progress of a game
+    /// with stages, and moves to name entry if it made the table, else game over.
+    fn end_run(&mut self, outcome: Outcome) -> anyhow::Result<()> {
         let Screen::Playing(game) = std::mem::replace(&mut self.screen, Screen::Menu) else {
             unreachable!()
         };
@@ -229,6 +238,16 @@ pub mod tests {
         left: u32,
         score: u32,
         reached: u32,
+        /// Score `give_up` reports, None for the default.
+        give_up: Option<u32>,
+    }
+
+    fn outcome(score: u32) -> Outcome {
+        Outcome {
+            score,
+            variant: format!("level {score}"),
+            summary: "fake summary".into(),
+        }
     }
 
     impl Game for Fake {
@@ -238,11 +257,7 @@ pub mod tests {
         fn tick(&mut self, input: &Input) -> Status {
             LOG.with_borrow_mut(|l| l.1.push(input.held(KeyCode::Right)));
             if self.left == 0 {
-                return Status::Over(Outcome {
-                    score: self.score,
-                    variant: format!("level {}", self.score),
-                    summary: "fake summary".into(),
-                });
+                return Status::Over(outcome(self.score));
             }
             self.left -= 1;
             Status::Running
@@ -259,6 +274,9 @@ pub mod tests {
         fn reached(&self) -> u32 {
             self.reached
         }
+        fn give_up(&self) -> Option<Outcome> {
+            self.give_up.map(outcome)
+        }
     }
 
     /// Reports a reached stage past its start, so a test fails if the SDK
@@ -269,6 +287,7 @@ pub mod tests {
             left: 2,
             score,
             reached: stage + 1,
+            give_up: None,
         }))
     }
 
@@ -280,6 +299,19 @@ pub mod tests {
                 left: 2,
                 score: 0,
                 reached: stage + 2,
+                give_up: None,
+            }) as Box<dyn Game>
+        })
+    }
+
+    /// The staged game, but `give_up` reports a score of 7.
+    fn giving_start(c: char, stage: u32) -> Option<Box<dyn Game>> {
+        (c == '\n').then(|| {
+            Box::new(Fake {
+                left: 2,
+                score: 0,
+                reached: stage + 2,
+                give_up: Some(7),
             }) as Box<dyn Game>
         })
     }
@@ -319,6 +351,11 @@ pub mod tests {
         start: staged_start,
         min_size: FAKE.min_size,
         thumb: FAKE.thumb,
+    };
+
+    static GIVING: Entry = Entry {
+        start: giving_start,
+        ..STAGED
     };
 
     pub fn app() -> App {
@@ -550,6 +587,31 @@ pub mod tests {
         press(&mut a, "5q");
         assert!(a.quit);
         assert_eq!(a.db.progress_rows(), 0);
+    }
+
+    #[test]
+    fn q_during_a_run_records_a_given_outcome() {
+        let mut a = App::new(Db::open_in_memory().unwrap(), &GIVING, true).unwrap();
+        keys(&mut a, &[KeyCode::Enter]);
+        press(&mut a, "q");
+        assert!(!a.quit);
+        assert!(matches!(a.screen, Screen::NameEntry { .. }));
+        assert_eq!(a.db.reached("staged").unwrap(), 3, "progress was raised");
+        press(&mut a, "abc");
+        a.handle_key(KeyCode::Enter).unwrap();
+        assert!(matches!(a.screen, Screen::GameOver { ranked: true, .. }));
+        assert_eq!(a.top.iter().map(|r| r.score).collect::<Vec<_>>(), [7]);
+        press(&mut a, "q");
+        assert!(a.quit);
+    }
+
+    #[test]
+    fn q_during_a_run_without_an_outcome_quits() {
+        let mut a = app();
+        press(&mut a, "5q");
+        assert!(a.quit);
+        assert!(a.playing(), "the run was not ended, so no row was recorded");
+        assert!(a.db.top("fake", TOP_N).unwrap().is_empty());
     }
 
     #[test]

@@ -63,10 +63,11 @@ impl Game for Pong {
 }
 ```
 
-- `q` quits on every screen and never reaches the game. Do not use it as a game key.
+- `q` never reaches the game. It quits from the menu and the game over screen, and during a run the SDK first asks `give_up`. Do not use it as a game key.
 - For continuous movement, check `input.held(KeyCode::Left)` in `tick`. Key repeats and releases reach `Input`, not `key`. With `hold_on_press`, `input.provisional(key)` is true while a hold rests on the press alone, before a key repeat confirms it, so a paddle can move gently until then.
 - Play any death animation yourself, then return `Status::Over(Outcome { score, variant, summary })` once. `variant` shows in the top table, for example "level 2". `summary` is one line on the game over screen.
 - A game with stages implements `fn reached(&self) -> u32`, the highest stage the run has got to. The SDK saves it as progress when the run ends and when the player quits with `q` during a run. A game without stages leaves it out and gets the default 0.
+- `fn give_up(&self) -> Option<Outcome>` is asked when the player presses `q` during a run. Return the outcome of the run so far to end it with the normal game over, so the score is recorded. The default `None` quits at once, as snake does.
 - When `ctx.dim` is true, draw muted and leave out key hints. A modal covers the middle.
 - Use `arcade_sdk::ui::{theme, font, panel, centered}` so the game matches the rest of the arcade.
 

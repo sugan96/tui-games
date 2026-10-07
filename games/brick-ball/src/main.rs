@@ -59,6 +59,14 @@ impl BrickBall {
             paused: false,
         }
     }
+
+    fn outcome(&self) -> Outcome {
+        Outcome {
+            score: self.board.score,
+            variant: self.board.variant(),
+            summary: self.board.summary(),
+        }
+    }
 }
 
 impl Game for BrickBall {
@@ -94,11 +102,7 @@ impl Game for BrickBall {
             .map_or((0, false), |(k, dir)| (dir, input.provisional(k)));
         self.board.tick(dir, provisional);
         if self.board.over() {
-            return Status::Over(Outcome {
-                score: self.board.score,
-                variant: self.board.variant(),
-                summary: self.board.summary(),
-            });
+            return Status::Over(self.outcome());
         }
         Status::Running
     }
@@ -119,6 +123,11 @@ impl Game for BrickBall {
 
     fn reached(&self) -> u32 {
         self.board.reached
+    }
+
+    /// The run so far, so q keeps the score. None once the run is over.
+    fn give_up(&self) -> Option<Outcome> {
+        (!self.board.over()).then(|| self.outcome())
     }
 }
 
@@ -213,6 +222,22 @@ mod tests {
         assert_eq!(g.reached(), 3);
         g.board.reached = 6;
         assert_eq!(g.reached(), 6);
+    }
+
+    #[test]
+    fn give_up_reports_the_run_so_far() {
+        let mut g = BrickBall::new(5, 2);
+        let b = &mut g.board;
+        (b.score, b.reached, b.bricks) = (40, 4, 3);
+        let o = g.give_up().expect("an outcome while running");
+        assert_eq!(
+            (o.score, o.variant.as_str(), o.summary.as_str()),
+            (40, "stage 2-4", "▬ 3 bricks")
+        );
+        g.board.phase = Phase::Dying { left: 6 };
+        assert!(g.give_up().is_some(), "dying still gives up");
+        g.board.phase = Phase::Over;
+        assert!(g.give_up().is_none());
     }
 
     #[test]

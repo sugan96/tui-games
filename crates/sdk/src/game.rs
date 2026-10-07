@@ -73,4 +73,9 @@ pub trait Game {
     fn reached(&self) -> u32 {
         0
     }
+    /// The outcome of the run so far, for `q` during a run. Return it to have the
+    /// run end with a game over and the score recorded; the default quits at once.
+    fn give_up(&self) -> Option<Outcome> {
+        None
+    }
 }
