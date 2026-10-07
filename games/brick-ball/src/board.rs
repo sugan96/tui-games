@@ -447,11 +447,10 @@ impl Board {
                 }
             }
 
-            if b.dy > 0.0
-                && oy.floor() < PADDLE_Y
-                && b.y.floor() == PADDLE_Y
-                && self.over_paddle(b.x)
-            {
+            // A falling ball that ends a sub-step in the paddle row over the
+            // paddle bounces, whether it entered the row in this sub-step or
+            // was already in it when the paddle arrived. Below the row it is lost.
+            if b.dy > 0.0 && b.y.floor() == PADDLE_Y && self.over_paddle(b.x) {
                 let t = (2.0 * (b.x - self.paddle_left()) / self.paddle_w() - 1.0).clamp(-1.0, 1.0);
                 (b.x, b.y) = (ox, oy);
                 (b.dx, b.dy) = bounce_dir(t);
@@ -1102,14 +1101,38 @@ mod tests {
 
     #[test]
     fn ball_that_passed_the_paddle_row_beside_the_paddle_is_not_bounced() {
-        // At stage 1 a tick moves the ball 0.48 px: to y 42.08, then 42.57.
+        // At stage 1 a tick moves the ball 0.48 px: to y 43.56, then past H.
         let mut b = empty(1);
-        b.balls = vec![ball(10.0, 41.6, 0.0, 1.0)];
-        b.tick(0, false);
-        assert_eq!(b.balls[0].y.floor(), PADDLE_Y, "{:?}", b.balls[0]);
+        b.balls = vec![ball(10.0, 43.08, 0.0, 1.0)];
+        assert!(!b.over_paddle(10.0));
         b.paddle_cx = 10.0;
         b.tick(0, false);
         assert!(b.balls[0].dy > 0.0, "{:?}", b.balls[0]);
+        b.tick(0, false);
+        assert_eq!((b.lives, b.phase), (2, Phase::Serve));
+    }
+
+    #[test]
+    fn paddle_arriving_under_a_ball_inside_its_row_bounces_it() {
+        // At stage 1 a tick moves the ball 0.48 px, to y 42.68 in the same row.
+        let mut b = empty(1);
+        b.balls = vec![ball(10.3, 42.2, 0.0, 1.0)];
+        assert!(!b.over_paddle(10.3));
+        b.paddle_cx = 10.0;
+        b.tick(0, false);
+        assert!(b.balls[0].dy < 0.0, "{:?}", b.balls[0]);
+        assert_eq!((b.lives, b.phase, b.balls.len()), (3, Phase::Play, 1));
+    }
+
+    #[test]
+    fn ball_below_the_paddle_row_is_still_lost() {
+        // At stage 1 a tick moves the ball 0.48 px: to y 43.68, then past H.
+        let mut b = empty(1);
+        b.balls = vec![ball(b.paddle_cx, 43.2, 0.0, 1.0)];
+        b.tick(0, false);
+        assert!(b.balls[0].dy > 0.0, "{:?}", b.balls[0]);
+        b.tick(0, false);
+        assert_eq!((b.lives, b.phase), (2, Phase::Serve));
     }
 
     #[test]
