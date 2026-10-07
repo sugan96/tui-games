@@ -352,13 +352,16 @@ fn clear_modal(frame: &mut Frame, b: &Board, left: f64) {
             .buffer_mut()
             .set_line(inner.x + 1, inner.y + 1 + i as u16, &line, inner.width - 2);
     }
-    let next = format!("next life at stage {}", b.next_life_stage());
-    ui::center_line(
-        frame,
-        inner,
-        inner.y + 5,
-        vec![Span::styled(next, theme::MUTED)],
-    );
+    // At the life cap the row stays blank so the modal keeps its size.
+    if b.lives < board::MAX_LIVES {
+        let next = format!("next life at stage {}", b.next_life_stage());
+        ui::center_line(
+            frame,
+            inner,
+            inner.y + 5,
+            vec![Span::styled(next, theme::MUTED)],
+        );
+    }
     let countdown = format!("STAGE {} IN {}", b.stage + 1, board::secs(left));
     ui::center_line(
         frame,
@@ -656,6 +659,22 @@ mod tests {
 
         g.paused = true;
         has(&render(&g, false), &["PAUSED", "stage 1  ·  300"]);
+    }
+
+    #[test]
+    fn clear_modal_hides_the_next_life_line_at_the_cap() {
+        let mut g = BrickBall::new(1, 1);
+        g.board.phase = Phase::Clear { left: 2.0 };
+        g.board.lives = board::MAX_LIVES;
+        let s = render(&g, false);
+        assert!(
+            s.contains("STAGE 1 CLEAR") && !s.contains("next life"),
+            "{s}"
+        );
+        for lives in [3, board::MAX_LIVES - 1] {
+            g.board.lives = lives;
+            has(&render(&g, false), &["next life at stage 5"]);
+        }
     }
 
     #[test]

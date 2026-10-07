@@ -140,7 +140,7 @@ When the last ball is lost the player loses a life. With lives left the ball ret
 
 Power-ups: when a brick breaks there is an 8% chance it drops a capsule, and only when no capsule is falling. A capsule falls at 20 pixels per second and is caught when it reaches the paddle row over the paddle, taking effect at once with no extra keys; otherwise it is gone past the bottom. `W` wide: the paddle gains 3 pixels for 15 seconds. `S` slow: every ball moves at 0.75 of its speed for 10 seconds. Catching the same kind again restarts its timer. Timers count down only while the ball is in play, so they hold while the ball waits on the paddle and during the stage clear countdown. `M` multi: every ball in play splits into 3 at spread angles, up to 9 balls in all. A life is lost only when the last ball goes.
 
-Stage clear: a `STAGE n CLEAR` modal shows the brick points of the stage, the clear bonus, the score, the stage of the next extra life and `STAGE n+1 IN 2`, counting down 2 seconds, then the next stage starts with the ball on the paddle.
+Stage clear: a `STAGE n CLEAR` modal shows the brick points of the stage, the clear bonus, the score, the stage of the next extra life, left out when lives are already at the cap, and `STAGE n+1 IN 2`, counting down 2 seconds, then the next stage starts with the ball on the paddle.
 
 ### Look
 
