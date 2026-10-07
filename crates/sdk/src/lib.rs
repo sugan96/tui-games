@@ -23,9 +23,12 @@ use ratatui::crossterm::{
         PushKeyboardEnhancementFlags,
     },
     execute,
-    terminal::supports_keyboard_enhancement,
+    terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate, supports_keyboard_enhancement},
 };
-use std::{io::stdout, time::Instant};
+use std::{
+    io::stdout,
+    time::{Duration, Instant},
+};
 
 /// Runs one game until the player quits. With `--info` as the first argument,
 /// prints the game's info for the launcher and exits instead.
@@ -45,10 +48,7 @@ pub fn run(entry: &'static Entry) -> anyhow::Result<()> {
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::REPORT_EVENT_TYPES)
         )?;
     }
-    let result = run_loop(
-        &mut terminal,
-        App::new(db, entry, Input::new(release_events)),
-    );
+    let result = run_loop(&mut terminal, App::new(db, entry, release_events));
     if release_events {
         execute!(stdout(), PopKeyboardEnhancementFlags)?;
     }
@@ -64,11 +64,14 @@ fn run_loop(
     // Deadline for the next tick, so input events do not push the tick back.
     let mut next = Instant::now() + app.tick_rate();
     while !app.quit {
+        // Synchronized output: the terminal shows the frame only when complete.
+        execute!(stdout(), BeginSynchronizedUpdate)?;
         terminal.draw(|f| ui::draw(f, &app))?;
+        execute!(stdout(), EndSynchronizedUpdate)?;
         let now = Instant::now();
         if now >= next {
             app.on_timer(now)?;
-            next = now + app.tick_rate();
+            next = next_deadline(next, now, app.tick_rate());
         } else if event::poll(next - now)?
             && let Event::Key(k) = event::read()?
         {
@@ -80,4 +83,46 @@ fn run_loop(
         }
     }
     Ok(())
+}
+
+/// The deadline after a tick that was due at prev and ran at now: prev + rate,
+/// so lateness does not add to the period. When that has already passed, now +
+/// rate instead, so two ticks never run without a draw between them.
+pub fn next_deadline(prev: Instant, now: Instant, rate: Duration) -> Instant {
+    let next = prev + rate;
+    if next <= now { now + rate } else { next }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RATE: Duration = Duration::from_millis(30);
+
+    #[test]
+    fn a_late_tick_advances_from_the_previous_deadline() {
+        let prev = Instant::now();
+        let now = prev + Duration::from_millis(7);
+        assert_eq!(next_deadline(prev, now, RATE), prev + RATE);
+    }
+
+    #[test]
+    fn a_passed_deadline_restarts_from_now() {
+        let prev = Instant::now();
+        let now = prev + Duration::from_millis(45);
+        assert_eq!(next_deadline(prev, now, RATE), now + RATE);
+        let now = prev + RATE; // exactly at the deadline
+        assert_eq!(next_deadline(prev, now, RATE), now + RATE);
+    }
+
+    #[test]
+    fn late_ticks_never_give_a_deadline_before_now() {
+        let start = Instant::now();
+        let mut next = start;
+        for late in [20, 40, 5, 70, 29] {
+            let now = next + Duration::from_millis(late);
+            next = next_deadline(next, now, RATE);
+            assert!(next > now, "{late} ms late");
+        }
+    }
 }

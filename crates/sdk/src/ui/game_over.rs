@@ -18,8 +18,13 @@ pub fn draw(frame: &mut Frame, outcome: &Outcome, ranked: bool) {
     frame.render_widget(Clear, area);
     frame.render_widget(block, area);
 
-    let digits = font::render_wide(&outcome.score.to_string());
-    let dx = inner.x + (inner.width - digits[0].chars().count() as u16) / 2;
+    let score = outcome.score.to_string();
+    let mut digits = font::render_wide(&score);
+    // Seven or more wide digits are wider than the modal. Narrow ones fit any u32.
+    if digits[0].chars().count() > inner.width as usize {
+        digits = font::render(&score);
+    }
+    let dx = inner.x + inner.width.saturating_sub(digits[0].chars().count() as u16) / 2;
     for (i, row) in digits.iter().enumerate() {
         frame
             .buffer_mut()

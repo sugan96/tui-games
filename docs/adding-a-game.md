@@ -5,13 +5,13 @@ A game is one binary crate under `games/` that links `arcade-sdk`. The SDK draws
 ## 1. Create the crate
 
 ```
-games/brick-ball/Cargo.toml
-games/brick-ball/src/main.rs
+games/pong/Cargo.toml
+games/pong/src/main.rs
 ```
 
 ```toml
 [package]
-name = "arcade-brick-ball"
+name = "arcade-pong"
 version.workspace = true
 edition.workspace = true
 
@@ -21,7 +21,7 @@ arcade-sdk.workspace = true
 ratatui.workspace = true
 ```
 
-Add `"games/brick-ball"` to `members` in the root `Cargo.toml`.
+Add `"games/pong"` to `members` in the root `Cargo.toml`.
 
 ## 2. Describe it
 
@@ -29,11 +29,13 @@ Add `"games/brick-ball"` to `members` in the root `Cargo.toml`.
 use arcade_sdk::{DrawCtx, Entry, Game, Input, Outcome, Status};
 
 const ENTRY: Entry = Entry {
-    id: "brick-ball",            // score key and install name, never change it after release
-    title: "brick ball",         // block letter logo, letters and spaces
-    about: "break every brick",  // one line on the game menu
+    id: "pong",                  // score key and install name, never change it after release
+    title: "pong",               // block letter logo, letters and spaces
+    about: "first to 7 wins",    // one line on the game menu
     starts: &[("1-3", "level")], // key chips on the game menu
-    start,                       // fn(char) -> Option<Box<dyn Game>>
+    stages: false,               // true shows a stage picker on the menu and passes the chosen stage
+    hold_on_press: false,        // true: without release events a press holds its key for 400 ms
+    start,                       // fn(char, u32) -> Option<Box<dyn Game>>
     min_size: (80, 24),          // smallest terminal your draw fits in
     thumb: &[                    // library card art: 12 rows of 24 palette letters
         "........................",
@@ -46,12 +48,14 @@ fn main() -> anyhow::Result<()> {
 }
 ```
 
-`start` gets every key pressed on the game menu except `q`. Return `None` for keys you do not use.
+`start` gets every key pressed on the game menu except `q`, Enter as `'\n'`, and the chosen stage, or 1 without stages. Return `None` for keys you do not use.
+
+Set `hold_on_press` for continuous controls such as a paddle, so they move on the press in terminals without key release events. Leave it false for tap controls, where a short tap would otherwise count as a 400 ms hold.
 
 ## 3. Implement `Game`
 
 ```rust
-impl Game for BrickBall {
+impl Game for Pong {
     fn key(&mut self, key: KeyCode) { /* presses only */ }
     fn tick(&mut self, input: &Input) -> Status { /* Running, or Over(Outcome) once */ }
     fn tick_rate(&self) -> Duration { /* time to the next tick, asked after every tick */ }
@@ -59,13 +63,15 @@ impl Game for BrickBall {
 }
 ```
 
-- `q` quits on every screen and never reaches the game. Do not use it as a game key.
-- For continuous movement, check `input.held(KeyCode::Left)` in `tick`. Key repeats and releases reach `Input`, not `key`.
+- `q` never reaches the game. It quits from the menu and the game over screen, and during a run the SDK first asks `give_up`. Do not use it as a game key.
+- For continuous movement, check `input.held(KeyCode::Left)` in `tick`. Key repeats and releases reach `Input`, not `key`. With `hold_on_press`, `input.provisional(key)` is true while a hold rests on the press alone, before a key repeat confirms it, so a paddle can move gently until then.
 - Play any death animation yourself, then return `Status::Over(Outcome { score, variant, summary })` once. `variant` shows in the top table, for example "level 2". `summary` is one line on the game over screen.
+- A game with stages implements `fn reached(&self) -> u32`, the highest stage the run has got to. The SDK saves it as progress when the run ends and when the player quits with `q` during a run. A game without stages leaves it out and gets the default 0.
+- `fn give_up(&self) -> Option<Outcome>` is asked when the player presses `q` during a run. Return the outcome of the run so far to end it with the normal game over, so the score is recorded. The default `None` quits at once, as snake does.
 - When `ctx.dim` is true, draw muted and leave out key hints. A modal covers the middle.
 - Use `arcade_sdk::ui::{theme, font, panel, centered}` so the game matches the rest of the arcade.
 
-`games/snake` is the reference: rules in `board.rs` with no terminal code, the `Game` adapter in `main.rs`, drawing in `draw.rs`.
+`games/brick-ball` is the reference for a game with stages and `games/snake` for one without. Both keep the rules in `board.rs` with no terminal code, the `Game` adapter in `main.rs` and the drawing in `draw.rs`.
 
 ## 4. Test it
 
@@ -76,14 +82,14 @@ fn meets_the_arcade_contract() {
 }
 ```
 
-`check` also fails unless the thumbnail is exactly 12 rows of 24 palette letters. It starts every start key, feeds a stream of keys, draws at `min_size` live and dimmed, and fails if a game never ends, returns a zero tick rate, or has a bad id or title. `testkit::render` returns a drawn frame as text for your own drawing tests.
+`check` also fails unless the thumbnail is exactly 12 rows of 24 palette letters. It starts every start key, feeds a stream of keys, draws at `min_size` live and dimmed, and fails if a game never ends, returns a zero tick rate, or has a bad id or title. It also starts a game with stages at stage 20 and checks that `reached` is at least the start stage. `testkit::render` returns a drawn frame as text for your own drawing tests.
 
 ## 5. Play it
 
 ```sh
-cargo run -p arcade-brick-ball                                   # on its own
-cargo build -p arcade-brick-ball
-cargo run -p arcade -- publish target/debug/arcade-brick-ball    # into the local catalog, shows as GET
+cargo run -p arcade-pong                                         # on its own
+cargo build -p arcade-pong
+cargo run -p arcade -- publish target/debug/arcade-pong          # into the local catalog, shows as GET
 cargo run -p arcade                                              # the library: Enter gets, Enter again plays
-cargo run -p arcade -- install target/debug/arcade-brick-ball    # or skip the catalog and install directly
+cargo run -p arcade -- install target/debug/arcade-pong          # or skip the catalog and install directly
 ```
